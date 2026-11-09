@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Iron Curtain Lite</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header>
+  <div class="brand">IRON CURTAIN <span>LITE</span></div>
+  <div class="year" id="year">1947</div>
+  <div class="chip" id="ip" title="Influence Points: spend them on countries. You get more each year."></div>
+  <div class="chip" id="tension" title="World tension. If it reaches 100, nuclear war ends the game for everyone."></div>
+  <div class="chip score" id="score" title="Score: the value of every country in your bloc, plus bonuses from events."></div>
+  <div class="grow"></div>
+  <button id="detente" class="ghost" title="A summit with your rival: tension −15. Once a year.">☮ Détente</button>
+  <button id="help" class="ghost" title="How to play">?</button>
+  <button id="end" class="primary" title="End the year (Enter)">End Year ▸</button>
+</header>
+<main>
+  <section id="mapbox">
+    <svg id="map" viewBox="0 0 1000 520" preserveAspectRatio="xMidYMid meet"></svg>
+    <div id="tip" hidden></div>
+    <div id="legend">
+      <span><i style="background:var(--su)"></i>Soviet bloc</span>
+      <span><i style="background:var(--su-lean)"></i>Leans East</span>
+      <span><i style="background:var(--neutral)"></i>Neutral</span>
+      <span><i style="background:var(--us-lean)"></i>Leans West</span>
+      <span><i style="background:var(--us)"></i>American bloc</span>
+      <span><i class="hatch"></i>Colony</span>
+      <span>⚔ Civil war</span>
+      <span style="color:#ffa040">➜ War</span>
+    </div>
+    <ol id="news"></ol>
+  </section>
+  <aside id="panel"></aside>
+</main>
+<div id="modal" hidden><div class="card" id="card"></div></div>
+<div id="toast" hidden></div>
+
+<script src="lib/d3.min.js"></script>
+<script src="lib/topojson-client.min.js"></script>
+<script src="lib/world.js"></script>
+<script src="data.js"></script>
+<script src="neighbours.js"></script>
+<script src="game.js"></script>
+<script src="ui.js"></script>
+</body>
+</html>

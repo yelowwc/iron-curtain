@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Iron Curtain Lite</title>
+<link rel="stylesheet" href="../style.css">
+</head>
+<body>
+<header>
+  <div class="brand">IRON CURTAIN <span>LITE</span></div>
+  <div class="year" id="year">1947</div>
+  <div class="chip" id="ip" title="Influence Points: spend them on countries. You get more each year."></div>
+  <div class="chip" id="tension" title="World tension. If it reaches 100, nuclear war ends the game for everyone."></div>
+  <div class="chip score" id="score" title="Score: the value of every country in your bloc, plus bonuses from events."></div>
+  <div class="grow"></div>
+  <button id="detente" class="ghost" title="A summit with your rival: tension −15. Once a year.">☮ Détente</button>
+  <button id="help" class="ghost" title="How to play">?</button>
+  <button id="end" class="primary" title="End the year (Enter)">End Year ▸</button>
+</header>
+<main>
+  <section id="mapbox">
+    <svg id="map" viewBox="0 0 1000 520" preserveAspectRatio="xMidYMid meet"></svg>
+    <div id="tip" hidden></div>
+    <div id="legend">
+      <span><i style="background:var(--su)"></i>Soviet bloc</span>
+      <span><i style="background:var(--su-lean)"></i>Leans East</span>
+      <span><i style="background:var(--neutral)"></i>Neutral</span>
+      <span><i style="background:var(--us-lean)"></i>Leans West</span>
+      <span><i style="background:var(--us)"></i>American bloc</span>
+      <span><i class="hatch"></i>Colony</span>
+      <span>⚔ Civil war</span>
+      <span style="color:#ffa040">➜ War</span>
+    </div>
+    <ol id="news"></ol>
+  </section>
+  <aside id="panel"></aside>
+</main>
+<div id="modal" hidden><div class="card" id="card"></div></div>
+<div id="toast" hidden></div>
+
+<script>window.onerror=(m,u,l,c,e)=>{const d=document.createElement("pre");d.style.cssText="position:fixed;top:0;left:0;z-index:99;background:#fff;color:#000";d.textContent="ERR "+m+" @"+l;document.body.appendChild(d)};</script>
+<script>window.NO_ANIM=location.hash.includes("still");</script>
+<script src="../lib/d3.min.js"></script>
+<script src="../lib/topojson-client.min.js"></script>
+<script src="../lib/world.js"></script>
+<script src="../data.js"></script>
+<script src="../neighbours.js"></script>
+<script src="../game.js"></script>
+<script src="../ui.js"></script>
+<script>
+const q=s=>document.querySelector(s); const [side,yrs,pick]=location.hash.slice(1).split(',');
+q('[data-side="'+(side||'US')+'"]').click();
+for(let y=0;y<(+yrs||0);y++){ let n=0; while(q('[data-i]')&&n++<9) q('[data-i]').click(); if (ironCurtain.game.side) GAME.computerTurn(ironCurtain.game, ironCurtain.game.side); q('#end').click(); }
+{let n=0; while(q('[data-i]')&&n++<9) q('[data-i]').click();}
+if(location.hash.includes('formit')){ const g=ironCurtain.game; for(const k of ['BEL','LUX']) g.c[k].a=g.c.NLD.a; g.ip.ME=30; GAME.form(g,'benelux');
+  g.c.FRG.army=1; g.wars=[]; GAME.act(g,'ME','invade','FRG'); g.wars[0].front=99; g.wars[0].years=3; ironCurtain.refresh(); document.getElementById('end').click(); }
+if(location.hash.includes('cutit')){ const g=ironCurtain.game; g.cuts=[{land:'IRN',taker:'IRQ',depth:0.35,year:1950},{land:'KOR',taker:'PRK',depth:0.3,year:1950}]; ironCurtain.refresh(); }
+if(location.hash.includes('occit')){ const g=ironCurtain.game; g.peace={win:'EGY',lose:'SAU'}; GAME.conference(g,['annex']); g.c.SAU.occ.unrest=72; g.c.SAU.occ.integ=30;
+  g.cuts.push({land:'ISR',taker:'EGY',depth:0.4,year:1948,occ:{unrest:20,integ:55,policy:'integrate',core:false,acted:0}}); ironCurtain.refresh(); }
+if(location.hash.includes('stage')){ const g=ironCurtain.game; g.wars=[]; GAME.civilWar; 
+  const add=(a,d,f)=>{g.wars.push({id:g.wars.length+1,att:a,def:d,front:f,years:2,help:{att:0,def:0},troops:{},armed:{}})};
+  add('IRQ','IRN',55); add('PAK','IND',35); add('ARG','GBR',40); add('SOM','ETH',-30); ironCurtain.refresh(); }
+if(pick){ const p=[...document.querySelectorAll('path.land')].find(p=>p.__data__&&p.__data__.key===pick); if(p) p.dispatchEvent(new MouseEvent(location.hash.includes('dbl')?'dblclick':'click',{bubbles:true})); }
+</script></body>
+</html>
