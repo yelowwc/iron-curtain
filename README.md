@@ -1,11 +1,15 @@
 # Iron Curtain Lite
 
-A small, free Cold War strategy game that runs in your browser. Lead the **United States** or the **Soviet Union** from 1947 to 1991 and win the world over, country by country, without starting a nuclear war.
+A small, free Cold War strategy game that runs in your browser. Lead the **United States**, the **Soviet Union** or any nation in between from 1947 to 1991, and come through the Cold War without starting a nuclear war.
+
+### [▶ Play it in your browser](https://yelowwc.github.io/iron-curtain/)
 
 ![Iron Curtain Lite in 1968](screenshot.png)
 
 ## Play
-Download or clone this repository and open `index.html` in any modern browser. No installation, no internet needed.
+**Online:** https://yelowwc.github.io/iron-curtain/
+
+**Offline:** download or clone this repository and open `index.html` in any modern browser. No installation, no internet needed.
 
 ## How to play
 - **Choose who you lead:** the **United States**, the **Soviet Union**, or any of about 100 nations that exist in 1947.
