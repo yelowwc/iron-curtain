@@ -64,5 +64,6 @@ if(location.hash.includes('stage')){ const g=ironCurtain.game; g.wars=[]; GAME.c
 if(pick){ const p=[...document.querySelectorAll('path.land')].find(p=>p.__data__&&p.__data__.key===pick); if(p) p.dispatchEvent(new MouseEvent(location.hash.includes('dbl')?'dblclick':'click',{bubbles:true})); }
 const zm=location.hash.match(/z=(\w+)/); if(zm) ironCurtain.zoomTo(zm[1]);
 if(location.hash.includes('mid')){ const t0=performance.now(); while(performance.now()-t0<800); d3.timerFlush(); }
+const vm=location.hash.match(/v=(-?[\d.]+):(-?[\d.]+):([\d.]+)/); if(vm) ironCurtain.view(+vm[1],+vm[2],+vm[3]);
 </script></body>
 </html>

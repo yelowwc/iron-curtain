@@ -713,6 +713,7 @@
   document.addEventListener('keydown', e => { if (e.key === 'Enter' && $('modal').hidden) endYear(); if (e.key === 'Escape' && $('modal').hidden) { sel = null; refresh(); } });
 
   // for the browser console and tests: ironCurtain.game is the game being played
-  window.ironCurtain = { get game() { return g; }, refresh, zoomTo, frontField, center };
+  window.ironCurtain = { get game() { return g; }, refresh, zoomTo, frontField, center,
+    view: (lon, lat, k) => { const [x, y] = proj([lon, lat]); svg.call(zoom.transform, d3.zoomIdentity.translate(W / 2 - k * x, H / 2 - k * y).scale(k)); } };
   start();
 })();
