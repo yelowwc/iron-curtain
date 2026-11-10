@@ -965,7 +965,7 @@
       const ahead = w.front >= 0 ? w.att : w.def, behind = w.front >= 0 ? w.def : w.att;
       if (Math.abs(w.front) >= 15 && !isHome(behind) && !w.noCut) {
         // the ceasefire line runs through every land of the loser that touches the winner (not a superpower's heartland)
-        const A = landsOf(g, ahead), lands = landsOf(g, behind).filter(k => !isHome(k) && A.some(j => neighbours(k, j)));
+        const winLands = landsOf(g, ahead), lands = landsOf(g, behind).filter(k => !isHome(k) && winLands.some(j => neighbours(k, j)));
         for (const k of lands.length ? lands : [behind]) cutLand(g, k, ahead, Math.abs(w.front) / 100 * 0.8);
         say(g, `${A} and ${Dn} sign a truce. The ceasefire line becomes the new border: ${info(ahead).name} keeps the land it holds.`);
       } else say(g, `${A} and ${Dn} sign a truce. Nobody wins.`);
