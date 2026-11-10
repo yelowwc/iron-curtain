@@ -993,9 +993,12 @@
     returnLand(g, w[done], w[done === 'att' ? 'def' : 'att']);
     const win = w[done], lose = w[done === 'att' ? 'def' : 'att'];
     if (done === 'def') {                                                 // the invasion fails: the attacker is weakened, nothing more
-      if (isHome(lose)) g.bonus[lose === 'USA' ? 'US' : 'SU'] -= 6; else g.c[lose].stab = Math.max(1, g.c[lose].stab - 1);
+      if (isHome(lose)) g.bonus[lose === 'USA' ? 'US' : 'SU'] -= 6; else { g.c[lose].stab = Math.max(1, g.c[lose].stab - 1); g.c[lose].army *= 0.7; }
       if (win === g.nation) g.bonus.ME += 3;
-      say(g, `${Dn} drives back the invasion from ${A}.`); return;
+      // the defender makes the aggressor pay
+      if (!isHome(lose) && win !== g.nation) { reparations(g, win, lose); say(g, `${Dn} drives back the invasion from ${A}, and ${A} pays reparations.`); }
+      else say(g, `${Dn} drives back the invasion from ${A}.`);
+      return;
     }
     if (isHome(lose)) {                                                   // a superpower is never occupied: it pulls back in defeat
       const p = lose === 'USA' ? 'US' : 'SU'; g.bonus[p] -= 6;
@@ -1010,15 +1013,35 @@
       if (lose === g.nation) overthrow(g, `${info(win).name} conquers your country. It is now a province of the victor.`);
       return;
     }
-    // the winner installs a friendly government
+    // The computer's terms. A crushing win next door, over a smaller country, may end in annexation
+    // (a winner holds at most two conquests at a time); otherwise a friendly government, reparations,
+    // and if the win was big, disarmament.
+    const score = warScore(w, done);
+    const conquests = ownedBy(g, win).filter(k => !isUnionPart(g, k)).length;
+    if (!isHome(win) && borders(g, win, lose) && valueOf(g, lose) <= valueOf(g, win) && conquests < 2 && score >= 85 && Math.random() < 0.35) {
+      annex(g, win, lose); applyNames(g);
+      say(g, `${info(win).name} defeats ${ORIGINAL_NAMES[lose]} and annexes it. The country disappears from the map.`);
+      if (lose === g.nation) overthrow(g, `${info(win).name} annexes your country. It is now a province of the victor.`);
+      return;
+    }
     L.a = clamp(isHome(win) ? (win === 'USA' ? 75 : -75) : g.c[win].a, -100, 100);
     L.stab = Math.max(1, L.stab - 1);
     takePower(g, lose, g.c[win].ruling === 'com' ? 'com' : 'nat');
     if (win === g.nation) { L.puppetOf = g.nation; g.bonus.ME += 3; }
     if (L.puppetOf && L.puppetOf !== win) L.puppetOf = null;
     if (isHome(win)) g.bonus[win === 'USA' ? 'US' : 'SU'] += 2;
-    say(g, `${info(win).name} defeats ${info(lose).name} and installs a friendly government.`);
+    const terms = ['a friendly government'];
+    reparations(g, win, lose); terms.push('reparations');
+    if (score >= 70) { L.army *= 0.5; terms.push('disarmament'); }
+    say(g, `${info(win).name} defeats ${info(lose).name} and imposes ${terms.slice(0, -1).join(', ')} and ${terms[terms.length - 1]}.`);
     if (lose === g.nation) overthrow(g, `${info(win).name}'s army takes your country. Your government is replaced.`);
+  }
+  // the loser pays: its treasury (or its army, if it has none to speak of) goes to the winner
+  function reparations(g, win, lose) {
+    const payer = lose === g.nation ? 'ME' : lose === 'USA' ? 'US' : lose === 'SUN' ? 'SU' : null;
+    if (payer) g.ip[payer] = Math.max(0, g.ip[payer] - 6); else g.c[lose].army *= 0.7;
+    const getter = win === g.nation ? 'ME' : win === 'USA' ? 'US' : win === 'SUN' ? 'SU' : null;
+    if (getter) g.ip[getter] += 6; else if (!isHome(win)) { g.c[win].army += 2; g.c[win].stab = Math.min(5, g.c[win].stab + 1); }
   }
   function capitalName(key) { const c = D.CAPITALS.find(x => x.key === key); return c ? c.name : 'the capital'; }
   // how the game stands: a nation by how much it grew, a superpower by the blocs

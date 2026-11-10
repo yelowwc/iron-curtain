@@ -361,17 +361,26 @@
     rescale();
   }
 
-  // a country's colour: red for the Soviet camp, blue for the American, grey-brown for neutral
+  // Every country has its own colour, like a political atlas: classic colours for the big players,
+  // a clean palette for everyone else, never the same as a neighbour (greedy colouring, done once).
+  // Land a country holds takes its colour; colonies are hatched.
+  const NAT_PAL = ['#5b8fc9', '#6aa35a', '#d6a23c', '#b75b5b', '#8b6fb8', '#3f9c95', '#d07a3a', '#a7a33f', '#c46b9a', '#4f7c4a', '#8f5a3c', '#5f6fb0',
+    '#b8913a', '#4a9bc0', '#9a4d6e', '#77a07d'];
+  const natColour = { USA: '#3a6fc4', SUN: '#b8281f', GBR: '#c8505f', FRA: '#4a76c0', FRG: '#8a8a82', GDR: '#a0605a', ITA: '#4f9a54', ESP: '#d9b23c',
+    PRT: '#3e8a5e', CHN: '#e0b43c', TWN: '#4f78c0', JPN: '#e6dcc4', IND: '#e38b3a', PAK: '#3d8a4f', TUR: '#7aa36b', IRN: '#4fa38c', IRQ: '#c9a46b',
+    EGY: '#d8c27a', SAU: '#4a8a4a', ISR: '#6d9bd6', BRA: '#5aa05a', ARG: '#86b8dd', MEX: '#5f9e6e', CAN: '#c45c5c', AUS: '#4c8a6e', POL: '#d36f8c',
+    YUG: '#5d7fa8', SWE: '#4d79b0', NOR: '#a85454', FIN: '#dfe5ea', CSK: '#5b7fb5', HUN: '#7da05a', ROU: '#d4b85a', BGR: '#6aa37a', GRC: '#6fa8d8',
+    KOR: '#7aa0d0', PRK: '#a33b3b', VNM: '#d34a3a', IDN: '#b5523b', ZAF: '#6f9a5a', NGA: '#4f9a5a', ETH: '#7fa34a', CUB: '#2f5fa8', MNG: '#8f5aa8' };
+  D.COUNTRIES.slice().sort((a, b) => b.val - a.val || a.key.localeCompare(b.key)).forEach(d => {
+    if (natColour[d.key]) return;
+    const used = new Set((NEIGHBOURS[d.key] || []).map(k => natColour[k]).filter(Boolean));
+    natColour[d.key] = NAT_PAL.find(c => !used.has(c)) || NAT_PAL[d.key.charCodeAt(0) % NAT_PAL.length];
+  });
   function colour(key) {
     if (!key || !g) return '#2a2e2c';
     if (g.c[key] && g.c[key].owner) return colour(g.c[key].owner);
-    if (key === 'USA') return '#2f6bc4';
-    if (key === 'SUN') return '#b8281f';
-    const c = g.c[key];
-    if (!c.independent) return 'url(#colony)';
-    const t = c.a / 100;
-    return t >= 0 ? d3.interpolateLab('#8d8873', t >= .6 ? '#3d7fd6' : '#7d9cc8')(Math.min(1, t / .6))
-      : d3.interpolateLab('#8d8873', t <= -.6 ? '#d23b30' : '#c47a6d')(Math.min(1, -t / .6));
+    if (!GAME.isHome(key) && !g.c[key].independent) return 'url(#colony)';
+    return natColour[key] || '#8d8873';
   }
   const campColour = { US: '#3d7fd6', SU: '#d23b30' };
   // occupied land must stand out from the land it sits on: if the two colours are close, use a deeper shade
