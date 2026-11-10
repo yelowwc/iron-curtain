@@ -4,7 +4,7 @@ const GAME = globalThis.GAME, runs = +process.argv[2] || 50, end = { attacker: 0
 let years = 0, n = 0;
 for (let i = 0; i < runs; i++) {
   const g = GAME.newGame('US'); let seen = new Set();
-  while (!g.over) {
+  while (!g.over && !g.verdict) {
     while (g.pending.length) GAME.choose(g, 0);
     GAME.computerTurn(g, 'US');
     const before = g.wars.map(w => ({ id: w.id, y: g.year }));

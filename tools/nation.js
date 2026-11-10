@@ -7,7 +7,7 @@ for (const key of keys) {
   for (let i = 0; i < 10; i++) {
     const g = GAME.newGame(key);
     let guard = 0;
-    while (!g.over && guard++ < 200) {
+    while (!g.over && !g.verdict && guard++ < 200) {
       const me = g.c[key];
       if (me.stab < 3) GAME.homeAct(g, 'stabilise');
       if (me.army < GAME.baseArmy(key) + 4) GAME.homeAct(g, 'army');
@@ -16,7 +16,7 @@ for (const key of keys) {
     for (const f of globalThis.DATA.FORMABLES) if (g.nation) GAME.form(g, f.id);
     GAME.endYear(g);
     }
-    const k = g.over.grade || g.over.why; res[k] = (res[k] || 0) + 1;
+    const o = g.over || g.verdict, k = o.grade || o.why; res[k] = (res[k] || 0) + 1;
   }
   console.log(key.padEnd(4), JSON.stringify(res));
 }

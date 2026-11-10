@@ -15,6 +15,7 @@
   <div class="chip score" id="score" title="Score: the value of every country in your bloc, plus bonuses from events."></div>
   <div class="grow"></div>
   <button id="detente" class="ghost" title="A summit with your rival: tension −15. Once a year.">☮ Détente</button>
+  <button id="finish" class="ghost" hidden>End game</button>
   <button id="help" class="ghost" title="How to play">?</button>
   <button id="end" class="primary" title="End the year (Enter)">End Year ▸</button>
 </header>
@@ -51,7 +52,7 @@
 <script>
 const q=s=>document.querySelector(s); const [side,yrs,pick]=location.hash.slice(1).split(',');
 q('[data-side="'+(side||'US')+'"]').click();
-for(let y=0;y<(+yrs||0);y++){ let n=0; while(q('[data-i]')&&n++<9) q('[data-i]').click(); if (ironCurtain.game.side) GAME.computerTurn(ironCurtain.game, ironCurtain.game.side); q('#end').click(); }
+for(let y=0;y<(+yrs||0);y++){ let n=0; if(q('#onward')&&!location.hash.includes('verdict')) q('#onward').click(); while(q('[data-i]')&&n++<9) q('[data-i]').click(); if (ironCurtain.game.side) GAME.computerTurn(ironCurtain.game, ironCurtain.game.side); q('#end').click(); }
 {let n=0; while(q('[data-i]')&&n++<9) q('[data-i]').click();}
 if(location.hash.includes('formit')){ const g=ironCurtain.game; for(const k of ['BEL','LUX']) g.c[k].a=g.c.NLD.a; g.ip.ME=30; GAME.form(g,'benelux');
   g.c.FRG.army=1; g.wars=[]; GAME.act(g,'ME','invade','FRG'); g.wars[0].front=99; g.wars[0].years=3; ironCurtain.refresh(); document.getElementById('end').click(); }
@@ -61,9 +62,17 @@ if(location.hash.includes('occit')){ const g=ironCurtain.game; g.peace={win:'EGY
 if(location.hash.includes('stage')){ const g=ironCurtain.game; g.wars=[]; GAME.civilWar; 
   const add=(a,d,f,p)=>{g.wars.push({id:g.wars.length+1,att:a,def:d,front:f,prev:p,years:2,help:{att:0,def:0},troops:{},armed:{}})};
   add("IRQ","IRN",55,25); add("PAK","IND",35,15); add("ARG","GBR",40,20); add("SOM","ETH",-30,-55); ironCurtain.refresh(); }
+if(location.hash.includes('customs')){ const g=ironCurtain.game; g.wars=[]; for(const k of ['VNM','RVN']) g.c[k].independent=true; g.c.RVN.a=50; g.c.VNM.a=-60; g.c.CHN.war=null;
+  const add=(a,d,f,p)=>{g.wars.push({id:g.wars.length+1,att:a,def:d,front:f,prev:p,years:2,help:{att:0,def:0},troops:{},armed:{},capFell:{}})};
+  add('VNM','RVN',45,20); add('CHN','TIB',50,30); g.c.KUR.war={rebels:'SU',balance:-30,years:2,help:{US:0,SU:0},troops:{},sep:true};
+  g.c.UKR.owner=null; g.c.UKR.a=20; g.c.CRM.owner='UKR'; add('SUN','UKR',35,15); g.c.SCO.owner=null; g.c.SCO.a=30; add('GBR','SCO',-25,-10); ironCurtain.refresh(); }
+if(location.hash.includes('states')){ const g=ironCurtain.game; g.wars=[]; g.c.GRC.war=null; g.c.CHN.war=null;
+  const add=(a,d,f,p)=>{g.wars.push({id:g.wars.length+1,att:a,def:d,front:f,prev:p,years:2,help:{att:0,def:0},troops:{},armed:{},capFell:{}})};
+  add('ROU','SUN',40,20); add('HUN','YUG',45,25); add('IRL','GBR',35,15); add('CHN','SUN',30,10); ironCurtain.refresh(); }
 if(pick){ const p=[...document.querySelectorAll('path.land')].find(p=>p.__data__&&p.__data__.key===pick); if(p) p.dispatchEvent(new MouseEvent(location.hash.includes('dbl')?'dblclick':'click',{bubbles:true})); }
 const zm=location.hash.match(/z=(\w+)/); if(zm) ironCurtain.zoomTo(zm[1]);
 if(location.hash.includes('mid')){ const t0=performance.now(); while(performance.now()-t0<800); d3.timerFlush(); }
 const vm=location.hash.match(/v=(-?[\d.]+):(-?[\d.]+):([\d.]+)/); if(vm) ironCurtain.view(+vm[1],+vm[2],+vm[3]);
+const dm=location.hash.match(/dbg=([A-Z]+):([A-Z]+)/); if(dm){ const f=ironCurtain.frontField(dm[1],dm[2]); const p=document.createElement('pre'); p.id='dbg'; p.textContent='DBG '+JSON.stringify({border:f.borderD.slice(0,300), size:f.size, th:f.thrusts.length, d25:f.at(0.25).d.length, d90:f.at(0.9).d.length, heart:f.heart}); document.body.appendChild(p); }
 </script></body>
 </html>
