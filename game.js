@@ -492,7 +492,6 @@
   const PEACE_TERMS = {
     white: { name: 'Status quo', cost: 0, help: 'Everyone goes home. Nothing changes.' },
     reparations: { name: 'Reparations', cost: 25, help: 'The loser pays: IP, or soldiers and prestige.' },
-    land: { name: 'Keep the occupied land', cost: 30, help: 'The front line becomes the new border.' },
     disarm: { name: 'Disarm them', cost: 20, help: 'Their army is cut in half.' },
     government: { name: 'Friendly government', cost: 55, help: 'A government loyal to you takes power there.' },
     annex: { name: 'Annex them', cost: 80, help: 'The country becomes part of yours. It may rebel later.' },
@@ -507,7 +506,7 @@
     for (const id in PEACE_TERMS) {
       const T = PEACE_TERMS[id];
       let ok = true, why = '';
-      if ((id === 'government' || id === 'annex' || id === 'land') && isHome(enemy)) { ok = false; why = id === 'land' ? 'A superpower gives up no land' : 'A superpower cannot be taken over'; }
+      if ((id === 'government' || id === 'annex') && isHome(enemy)) { ok = false; why = 'A superpower cannot be taken over'; }
       if (id === 'annex' && isHome(me)) { ok = false; why = 'Superpowers install governments instead'; }
       if (id === 'annex' && ok && !borders(g, me, enemy)) { ok = false; why = 'Must border your land'; }
       out.push({ id, name: T.name, cost: T.cost, help: T.help, ok, why });
@@ -544,7 +543,6 @@
         if (getter) g.ip[getter] += 6;
       }
       if (id === 'disarm') L.army *= 0.5;
-      if (id === 'land') cutLand(g, lose, win, depth || 0.45);
       if (id === 'government') {
         L.a = clamp(isHome(win) ? (win === 'USA' ? 75 : -75) : g.c[win].a, -100, 100); L.stab = Math.max(1, L.stab - 1);
         takePower(g, lose, g.c[win].ruling === 'com' ? 'com' : 'nat');
@@ -736,6 +734,7 @@
       const pd = armyPower(g, w.def) * 1.15 * (w.capFell.def ? 0.7 : 1) + w.help.def + allyHelp(g, w.def, w.att);
       let d = (pa - pd) * 0.9 + rand(-16, 16);
       for (const p of ['US', 'SU']) if (w.troops[p]) d += w.troops[p] === 'att' ? 25 : -25;
+      w.prev = w.front;                                                       // where the front stood a year ago (the map draws the advance)
       w.front = clamp(w.front + d * 2.2 + (w.lastD || 0) * 0.8, -100, 100);   // momentum: a winning side keeps winning
       w.lastD = d;
       // the fighting costs both armies

@@ -93,13 +93,17 @@ main { flex: 1; display: flex; min-height: 0; }
   #news { display: none; }
 }
 
-.warline { fill: none; stroke: #ffa040; stroke-width: 2.5; stroke-dasharray: 6 4; vector-effect: non-scaling-stroke; pointer-events: none; animation: march 2.5s linear infinite; }
+.warline { fill: none; stroke: #ffa040; stroke-width: 1.6; opacity: .6; stroke-dasharray: 6 4; vector-effect: non-scaling-stroke; pointer-events: none; animation: march 2.5s linear infinite; }
 @keyframes march { to { stroke-dashoffset: -10; } }
 .zone { pointer-events: none; }
 .zonefill { opacity: 1; }
-.zonehatch { fill: url(#occupied); opacity: .35; }
+.zonehatch { fill: url(#occupied); opacity: .22; }
 .zonecover { fill: none; stroke-width: 3; vector-effect: non-scaling-stroke; pointer-events: none; }
-.zoneline { fill: none; stroke: #0b141c; stroke-width: 1.6; vector-effect: non-scaling-stroke; stroke-linejoin: round; stroke-dasharray: 4 2; }
+.zoneline { fill: none; stroke: #0b141c; stroke-width: 1.7; vector-effect: non-scaling-stroke; stroke-linejoin: round; }
+.zoneglow { fill: none; stroke-width: 4.5; opacity: .45; vector-effect: non-scaling-stroke; stroke-linejoin: round; }
+.zone.cut .zoneglow { display: none; }
+.zone.civil .zoneline { stroke-dasharray: 5 2.5; }
+.thrust { stroke: #0b141c; stroke-width: .9; vector-effect: non-scaling-stroke; stroke-linejoin: round; opacity: .92; }
 .capital.fallen { stroke: #fff; stroke-width: 1.2; }
 .selected.mine { stroke: #f5e3a3; stroke-width: 1.6; }
 .you { font-size: 13px; font-weight: 400; color: var(--gold); }

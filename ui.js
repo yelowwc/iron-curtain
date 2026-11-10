@@ -148,18 +148,42 @@
       if (x >= x0 && x <= x1 && y >= y0 && y <= y1) far = Math.max(far, v);
     }
     const ring = d3.line().curve(d3.curveCatmullRomClosed.alpha(0.5));
+    const levelOf = t => inward ? -Math.max(size * 0.03, far * Math.min(1, t) * 1.05) : far * (1 - Math.min(1, t)) * 0.98;
+    const valAt = pt => { const i = Math.round((pt[0] - gx) / cell), j = Math.round((pt[1] - gy) / cell); return grid[clampI(j, gh) * gw + clampI(i, gw)]; };
+    // is this point on the occupied side of the front at depth t?
+    const held = (pt, t) => inward ? valAt(pt) >= levelOf(t) : valAt(pt) >= levelOf(t);
+    // a land mask at twice the grid's resolution: fast 'is this on the land' checks
+    const mw = gw * 2, mh = gh * 2, mask = new Uint8Array(mw * mh);
+    { const cv = document.createElement('canvas'); cv.width = mw; cv.height = mh; const ctx = cv.getContext('2d');
+      ctx.setTransform(2 / cell, 0, 0, 2 / cell, -gx * 2 / cell + 0.5, -gy * 2 / cell + 0.5);
+      ctx.fill(new Path2D(outlineOf(land)));
+      const px = ctx.getImageData(0, 0, mw, mh).data; for (let k = 0; k < mask.length; k++) mask[k] = px[k * 4 + 3] > 110 ? 1 : 0; }
+    const onLand = pt => { const i = Math.round((pt[0] - gx) * 2 / cell), j = Math.round((pt[1] - gy) * 2 / cell); return i >= 0 && j >= 0 && i < mw && j < mh && mask[j * mw + i] === 1; };
+    // the front line proper: zone outline points well inside the land (not the coast or the old border)
+    const onFront = q => { const e = cell * 0.9; return onLand(q) && onLand([q[0] + e, q[1]]) && onLand([q[0] - e, q[1]]) && onLand([q[0], q[1] + e]) && onLand([q[0], q[1] - e]); };
+    // where a spearhead's tip is on a front line: the point of the line farthest along the spearhead, near its axis, on the land
+    const tipOn = (th, res) => {
+      const band = Math.max(th.w * 1.6, size * 0.12);
+      let best = null, bestAlong = -Infinity;
+      for (const r of res.rings) for (const q of r) {
+        if (!onFront(q)) continue;
+        const dx = q[0] - th.T[0], dy = q[1] - th.T[1], along = dx * th.ax + dy * th.ay, across = Math.abs(dx * th.ay - dy * th.ax);
+        if (across < band && along > bestAlong) { bestAlong = along; best = q; }
+      }
+      return best;                                       // null: this spearhead has no front left (it reached the sea)
+    };
     const at = t => {
       t = Math.min(1, t);
-      const level = inward ? -Math.max(size * 0.03, far * t * 1.05) : far * (1 - t) * 0.98;
+      const level = levelOf(t);
       const cont = d3.contours().size([gw, gh]).thresholds([level])(grid)[0];
       const rings = cont.coordinates.flatMap(poly => poly.filter(r => r.length > 3).map(r => r.map(q => [gx + q[0] * cell, gy + q[1] * cell])));
       return { d: rings.map(r => ring(r)).join(''), rings };
     };
     // is a screen point inside this land? (only the front line on real land gets soldiers)
-    const inside = pt => { const ll = proj.invert(pt); return !!ll && d3.geoContains(shape, ll); };
+
     // how deep the front must go to reach a point (for capitals)
     const depthAt = pt => { const i = Math.round((pt[0] - gx) / cell), j = Math.round((pt[1] - gy) / cell); const v = Math.abs(grid[clampI(j, gh) * gw + clampI(i, gw)]); return far ? v / far : 0; };
-    return (fieldCache[id] = { at, borderD, depthAt, inside, heart });
+    return (fieldCache[id] = { at, borderD, depthAt, inside: onLand, heart, held, tipOn, onFront, thrusts, size });
   }
   const clampI = (i, n) => Math.max(0, Math.min(n - 1, i));
   const center = {};
@@ -169,8 +193,15 @@
   }
 
   let zoomK = 1;
-  const zoom = d3.zoom().scaleExtent([1, 8]).translateExtent([[0, 0], [W, H]]).on('zoom', e => { root.attr('transform', e.transform); zoomK = e.transform.k; drawLabels(); fronts.selectAll('.usize').attr('transform', `scale(${1 / Math.sqrt(zoomK)})`); });
+  const zoom = d3.zoom().scaleExtent([1, 8]).translateExtent([[0, 0], [W, H]]).on('zoom', e => { root.attr('transform', e.transform); zoomK = e.transform.k; drawLabels(); fronts.selectAll('.usize').attr('transform', `scale(${1 / Math.sqrt(zoomK)})`); rescale(); });
   svg.call(zoom).on('dblclick.zoom', null);
+  // hatching and capital dots keep their size on screen at any zoom
+  function rescale() {
+    const k = 1 / zoomK;
+    defs.select('#colony').attr('patternTransform', `rotate(45) scale(${k})`);
+    defs.select('#occupied').attr('patternTransform', `rotate(-45) scale(${k})`);
+    capitals.selectAll('circle').attr('r', function () { return (this.classList.contains('fallen') ? 2.6 : 1.6) * Math.pow(k, 0.75); });
+  }
 
   // a country's colour: red for the Soviet camp, blue for the American, grey-brown for neutral
   function colour(key) {
@@ -185,6 +216,70 @@
       : d3.interpolateLab('#8d8873', t <= -.6 ? '#d23b30' : '#c47a6d')(Math.min(1, -t / .6));
   }
   const campColour = { US: '#3d7fd6', SU: '#d23b30' };
+  // occupied land must stand out from the land it sits on: if the two colours are close, use a deeper shade
+  function zoneColour(fill, under) {
+    const a = d3.color(String(fill).startsWith('url') ? '#6b6a5a' : fill), b = d3.color(String(under).startsWith('url') ? '#3a3d35' : under);
+    if (!a) return '#777777';
+    if (!b) return a.formatHex();
+    const la = d3.lab(a), lb = d3.lab(b), dist = Math.hypot(la.l - lb.l, la.a - lb.a, la.b - lb.b);
+    if (dist >= 28) return a.formatHex();
+    const out = d3.lab(la.l, la.a, la.b);
+    out.l = la.l >= lb.l ? Math.min(90, lb.l + 20) : Math.max(20, lb.l - 22);              // move away from the land beneath
+    const ch = Math.hypot(la.a, la.b);
+    if (ch > 4) { const k = Math.min(2.2, (ch + 14) / ch); out.a = la.a * k; out.b = la.b * k; }   // and a little more colourful
+    return out.formatHex();
+  }
+  // a tapered, slightly curved war-map arrow from a to b
+  function fatArrow(a, b, w) {
+    const dx = b[0] - a[0], dy = b[1] - a[1], L = Math.hypot(dx, dy);
+    if (L < w * 1.5) return null;
+    const ux = dx / L, uy = dy / L, nx = -uy, ny = ux, head = Math.min(L * 0.45, w * 2.4), hw = w * 1.3;
+    const bx = b[0] - ux * head, by = b[1] - uy * head, bend = L * 0.07;
+    const mx = (a[0] + bx) / 2 + nx * bend, my = (a[1] + by) / 2 + ny * bend;
+    const p = (x, y) => x.toFixed(2) + ',' + y.toFixed(2);
+    return `M${p(a[0] + nx * w * 0.2, a[1] + ny * w * 0.2)}Q${p(mx + nx * w * 0.55, my + ny * w * 0.55)} ${p(bx + nx * w * 0.5, by + ny * w * 0.5)}`
+      + `L${p(bx + nx * hw, by + ny * hw)}L${p(b[0], b[1])}L${p(bx - nx * hw, by - ny * hw)}L${p(bx - nx * w * 0.5, by - ny * w * 0.5)}`
+      + `Q${p(mx - nx * w * 0.55, my - ny * w * 0.55)} ${p(a[0] - nx * w * 0.2, a[1] - ny * w * 0.2)}Z`;
+  }
+  // counters evenly spaced along the front line (only where it runs over land), in facing pairs
+  function frontUnits(f, res, depth, z, attCol) {
+    const segs = [];
+    for (const r of res.rings) {
+      let cur = [];
+      for (let i = 0; i <= r.length; i++) {
+        const q = r[i % r.length];
+        if (f.onFront(q)) cur.push(q); else { if (cur.length > 1) segs.push(cur); cur = []; }
+      }
+      if (cur.length > 1) segs.push(cur);
+    }
+    const lens = segs.map(sg => { let L = 0; for (let i = 1; i < sg.length; i++) L += Math.hypot(sg[i][0] - sg[i - 1][0], sg[i][1] - sg[i - 1][1]); return L; });
+    const total = lens.reduce((a, b) => a + b, 0);
+    if (!total) return [];
+    const nA = Math.max(1, Math.min(6, Math.round(!z.taker ? 3 : GAME.isHome(z.taker) ? 6 : g.c[z.taker].army / 3)));
+    const nD = Math.max(1, Math.min(6, Math.round(g.c[z.land].army / 3)));
+    const n = Math.max(nA, nD);
+    const pointAt = s => {                                   // point and direction at arc length s
+      for (let k = 0; k < segs.length; k++) {
+        if (s > lens[k]) { s -= lens[k]; continue; }
+        const sg = segs[k];
+        for (let i = 1; i < sg.length; i++) {
+          const L = Math.hypot(sg[i][0] - sg[i - 1][0], sg[i][1] - sg[i - 1][1]);
+          if (s <= L || i === sg.length - 1) { const u = L ? Math.min(1, s / L) : 0; return { x: sg[i - 1][0] + (sg[i][0] - sg[i - 1][0]) * u, y: sg[i - 1][1] + (sg[i][1] - sg[i - 1][1]) * u, dx: (sg[i][0] - sg[i - 1][0]) / (L || 1), dy: (sg[i][1] - sg[i - 1][1]) / (L || 1) }; }
+          s -= L;
+        }
+      }
+      return null;
+    };
+    const out = [], off = 4 / Math.sqrt(zoomK), defCol = colour(z.land);
+    for (let i = 0; i < n; i++) {
+      const p = pointAt((i + 0.5) / n * total); if (!p) continue;
+      let nx = -p.dy, ny = p.dx;
+      if (!f.held([p.x + nx * off, p.y + ny * off], depth)) { nx = -nx; ny = -ny; }        // normal pointing into the held zone
+      if (i < nA) out.push({ id: 'a' + i, x: p.x + nx * off, y: p.y + ny * off, col: attCol });
+      if (i < nD) out.push({ id: 'd' + i, x: p.x - nx * off, y: p.y - ny * off, col: defCol });
+    }
+    return out;
+  }
   const lastDepth = {}, timers = {};
   function drawMap() {
     drawBorders();
@@ -199,7 +294,8 @@
       if (Math.abs(w.front) < 5) continue;
       const taker = w.front >= 0 ? w.att : w.def, land = w.front >= 0 ? w.def : w.att;
       if (GAME.isHome(land)) continue;
-      zones.push({ id: 's' + w.id + (w.front >= 0 ? 'a' : 'd'), taker, land, depth: Math.abs(w.front) / 100, fill: colour(taker),
+      const prev = w.prev === undefined ? undefined : Math.sign(w.prev) === Math.sign(w.front) ? Math.abs(w.prev) / 100 : 0;
+      zones.push({ id: 's' + w.id + (w.front >= 0 ? 'a' : 'd'), taker, land, depth: Math.abs(w.front) / 100, prev, fill: colour(taker),
         capital: w.capFell && w.capFell[w.front >= 0 ? 'def' : 'att'] });
     }
     // civil wars: the rebels advance from a friendly neighbour's border, or hold the land far from the capital
@@ -210,7 +306,7 @@
       zones.push({ id: 'c' + d.key, taker: friend || null, land: d.key, depth: share * 0.9, fill: campColour[w.rebels], civil: true });
     }
     const zg = fronts.selectAll('g.zone').data(zones, z => z.id);
-    zg.exit().remove();
+    zg.exit().each(function (z) { if (timers[z.id]) timers[z.id].stop(); delete lastDepth[z.id]; }).remove();
     const zen = zg.enter().append('g').attr('class', 'zone');
     zen.append('clipPath').attr('id', z => 'clip-' + z.id).append('path');
     zen.append('path').attr('class', 'zonefill')
@@ -220,44 +316,57 @@
     zen.append('path').attr('class', 'zonehatch');
     zen.append('clipPath').attr('id', z => 'zclip-' + z.id).append('path');
     zen.append('path').attr('class', 'zonecover');
+    zen.append('path').attr('class', 'zoneglow');
     zen.append('path').attr('class', 'zoneline');
+    zen.append('g').attr('class', 'thrusts');
     zen.append('g').attr('class', 'units');
-    zen.merge(zg).order().classed('cut', z => !!z.cut).each(function (z) {
+    zen.merge(zg).order().classed('cut', z => !!z.cut).classed('civil', z => !!z.civil).each(function (z) {
       const el = d3.select(this), f = frontField(z.land, z.taker);
       if (!f) return;
       let depth = z.depth;
       const cap = D.CAPITALS.find(x => x.key === z.land);
       if (z.capital && cap) depth = Math.max(depth, f.depthAt(proj([cap.lon, cap.lat])) * 1.1);     // a fallen capital is always inside
+      const fill = z.cut ? z.fill : zoneColour(z.fill, colour(z.land));
       el.select('clipPath path').attr('d', outlineOf(z.land));
-      el.selectAll('.zonefill,.zonehatch,.zoneline').attr('clip-path', `url(#clip-${z.id})`);
-      el.select('.zonecover').attr('clip-path', `url(#zclip-${z.id})`).attr('stroke', z.fill).attr('d', z.civil ? null : f.borderD || null);
-      el.select('.zonefill').attr('fill', z.fill);
-      const paint = res => {
-        el.selectAll('.zonefill,.zonehatch,.zoneline').attr('d', res.d);
+      el.selectAll('.zonefill,.zonehatch,.zoneline,.zoneglow').attr('clip-path', `url(#clip-${z.id})`);
+      el.select('.zonecover').attr('clip-path', `url(#zclip-${z.id})`).attr('stroke', fill).attr('d', z.civil ? null : f.borderD || null);
+      el.select('.zonefill').attr('fill', fill);
+      el.select('.zoneglow').attr('stroke', d3.color(fill).brighter(0.7));
+      // offensive arrows: where the front moved this year, along the spearheads (pushed back: the defender's arrows point home)
+      const prev = z.prev === undefined ? depth : z.prev, moved = depth - prev;
+      const arrows = z.cut || z.civil || Math.abs(moved) < 0.04 ? [] : f.thrusts.map((th, k) => ({ k, th }));
+      const arrowFill = moved < 0 ? d3.color(zoneColour(colour(z.land), fill)).brighter(0.3) : d3.color(fill).brighter(0.45);
+      const aw = Math.max(1, Math.min(6, f.size * 0.05));
+      const ag = el.select('.thrusts').selectAll('path').data(arrows, a => a.k);
+      ag.exit().remove();
+      const agm = ag.enter().append('path').attr('class', 'thrust').merge(ag).attr('fill', arrowFill);
+      const prevRes = arrows.length ? f.at(Math.max(0.001, prev)) : null;
+      const paint = t => {
+        const res = f.at(t);
+        el.selectAll('.zonefill,.zonehatch,.zoneline,.zoneglow').attr('d', res.d);
         el.select('#zclip-' + z.id + ' path').attr('d', res.d);
+        agm.attr('d', a => {                                                   // from last year's line to this one
+          const b = f.tipOn(a.th, res); if (!b) return null;
+          let s0 = prev < 0.01 ? a.th.T : f.tipOn(a.th, prevRes) || b;
+          const L = Math.hypot(b[0] - s0[0], b[1] - s0[1]), min = f.size * 0.14;
+          if (L < min) { const ux = L ? (b[0] - s0[0]) / L : a.th.ax * Math.sign(moved), uy = L ? (b[1] - s0[1]) / L : a.th.ay * Math.sign(moved); s0 = [b[0] - ux * min, b[1] - uy * min]; }
+          return fatArrow(s0, b, aw);
+        });
+        return res;
       };
       // roll smoothly from last year's front to this year's
-      const from = lastDepth[z.id] === undefined ? depth : lastDepth[z.id];
+      const from = lastDepth[z.id] === undefined ? prev : lastDepth[z.id];
       lastDepth[z.id] = depth;
       if (timers[z.id]) timers[z.id].stop();
       const fin = f.at(depth);
-      if (Math.abs(from - depth) < 0.005 || window.NO_ANIM) paint(fin);
+      if (Math.abs(from - depth) < 0.005 || window.NO_ANIM) paint(depth);
       else timers[z.id] = d3.timer(t => {
-        const u = Math.min(1, t / 1300), e = d3.easeCubicInOut(u);
-        paint(u < 1 ? f.at(from + (depth - from) * e) : fin);
+        const u = Math.min(1, t / 1600), e = d3.easeCubicInOut(u);
+        paint(from + (depth - from) * e);
         if (u >= 1) timers[z.id].stop();
       });
-      // small army counters along the front: the side that advances behind it, the other in front
-      const pts = z.cut ? [] : fin.rings.flat().filter(f.inside);
-      const nA = Math.max(1, Math.min(6, Math.round(!z.taker ? 3 : GAME.isHome(z.taker) ? 6 : g.c[z.taker].army / 3)));
-      const nD = Math.max(1, Math.min(6, Math.round(g.c[z.land].army / 3)));
-      const units = [];
-      const place = (n, side, col) => { for (let i = 0; i < n && pts.length; i++) {
-        const q = pts[Math.floor((i + (side === 'd' ? 0.75 : 0.25)) / n * pts.length)];
-        const dx = f.heart[0] - q[0], dy = f.heart[1] - q[1], L = Math.hypot(dx, dy) || 1, off = (side === 'a' ? -5 : 5) / Math.sqrt(zoomK);
-        units.push({ id: side + i, x: q[0] + dx / L * off, y: q[1] + dy / L * off, col });
-      } };
-      place(nA, 'a', z.fill); place(nD, 'd', colour(z.land));
+      // army counters stand in two lines along the front: the side holding the zone behind it, the other in front
+      const units = z.cut ? [] : frontUnits(f, fin, depth, z, fill);
       const us = el.select('.units').selectAll('g.unit').data(units, u => u.id);
       us.exit().remove();
       const ue = us.enter().append('g').attr('class', 'unit').attr('transform', u => `translate(${u.x},${u.y})`);
@@ -267,7 +376,7 @@
       const um = ue.merge(us);
       um.select('rect').attr('fill', u => u.col);
       um.select('.usize').attr('transform', `scale(${1 / Math.sqrt(zoomK)})`);
-      (window.NO_ANIM ? um : um.transition().duration(1300).ease(d3.easeCubicInOut)).attr('transform', u => `translate(${u.x},${u.y})`);
+      (window.NO_ANIM ? um : um.transition().duration(1600).ease(d3.easeCubicInOut)).attr('transform', u => `translate(${u.x},${u.y})`);
     });
     arrows.selectAll('path').data(W2, w => w.id).join('path').attr('class', 'warline').attr('marker-end', 'url(#arrowhead)').attr('d', w => {
       const a = center[w.att], b = center[w.def], mx = (a[0] + b[0]) / 2, my = (a[1] + b[1]) / 2;
@@ -280,7 +389,7 @@
     const fallenTo = {};
     for (const w of g.wars) for (const side of ['att', 'def']) if (w.capFell && w.capFell[side]) fallenTo[w[side]] = w[side === 'att' ? 'def' : 'att'];
     capitals.selectAll('circle').data(D.CAPITALS.filter(x => g.c[x.key] && (g.c[x.key].independent || GAME.isHome(x.key))), x => x.key)
-      .join('circle').attr('class', x => 'capital' + (fallenTo[x.key] ? ' fallen' : '')).attr('r', x => fallenTo[x.key] ? 2.6 : 1.6)
+      .join('circle').attr('class', x => 'capital' + (fallenTo[x.key] ? ' fallen' : '')).attr('r', x => (fallenTo[x.key] ? 2.6 : 1.6) * Math.pow(1 / zoomK, 0.75))
       .attr('fill', x => fallenTo[x.key] ? colour(fallenTo[x.key]) : null)
       .attr('cx', x => proj([x.lon, x.lat])[0]).attr('cy', x => proj([x.lon, x.lat])[1]);
     drawLabels();
@@ -509,7 +618,7 @@
     let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
     for (const n of nodes) { const b = n.getBBox(); x0 = Math.min(x0, b.x); y0 = Math.min(y0, b.y); x1 = Math.max(x1, b.x + b.width); y1 = Math.max(y1, b.y + b.height); }
     const k = Math.max(1, Math.min(8, 0.7 * Math.min(W / Math.max(1, x1 - x0), H / Math.max(1, y1 - y0))));
-    svg.transition().duration(650).call(zoom.transform, d3.zoomIdentity.translate(W / 2 - k * (x0 + x1) / 2, H / 2 - k * (y0 + y1) / 2).scale(k));
+    (window.NO_ANIM ? svg : svg.transition().duration(650)).call(zoom.transform, d3.zoomIdentity.translate(W / 2 - k * (x0 + x1) / 2, H / 2 - k * (y0 + y1) / 2).scale(k));
   }
 
   // ================= pop-ups =================
@@ -604,6 +713,6 @@
   document.addEventListener('keydown', e => { if (e.key === 'Enter' && $('modal').hidden) endYear(); if (e.key === 'Escape' && $('modal').hidden) { sel = null; refresh(); } });
 
   // for the browser console and tests: ironCurtain.game is the game being played
-  window.ironCurtain = { get game() { return g; }, refresh };
+  window.ironCurtain = { get game() { return g; }, refresh, zoomTo, frontField, center };
   start();
 })();
