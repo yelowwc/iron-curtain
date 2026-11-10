@@ -618,7 +618,7 @@
     const d = GAME.info(f.key), c = g.c[f.key];
     const ps = GAME.pactsOf(g, f.key).map(p => p.name).join(', ');
     tip.innerHTML = `<b>${esc(d.name)}${f.key === g.nation ? ' (you)' : ''}</b><br>${c.owner ? 'Part of ' + esc(GAME.info(c.owner).name) + (c.owner === g.nation ? ' (yours)' : '') : GAME.isHome(f.key) ? 'Superpower' : !c.independent ? 'Colony of ' + esc(d.colony) + ' until ' + d.indep : GAME.leaning(c.a) + (c.war ? ' · ⚔ civil war' : '')}
-      ${c.independent || GAME.isHome(f.key) ? `<br>Army ${Math.round(c.army)}` : ''}${ps ? '<br>' + esc(ps) : ''}${GAME.warOf(g, f.key) ? '<br>⚔ at war' : ''}${GAME.lostLand(g, f.key).map(k => '<br>Lost land to ' + esc(GAME.info(k.taker).name)).join('')}${region !== f.key ? '<br><i>Region: ' + esc(GAME.info(region).name) + (g.c[region].occ ? ' · unrest ' + Math.round(g.c[region].occ.unrest) : '') + '</i>' : ''}<br><span class="dim">Double-click: this region</span>`;
+      ${c.independent || GAME.isHome(f.key) ? `<br>Army ${Math.round(c.army)}` : ''}${ps ? '<br>' + esc(ps) : ''}${GAME.warOf(g, f.key) ? '<br>⚔ at war' : ''}${GAME.lostLand(g, f.key).map(k => '<br>Lost land to ' + esc(GAME.info(k.taker).name)).join('')}${region !== f.key ? '<br><i>Region: ' + esc(GAME.info(region).name) + (g.c[region].occ && !g.c[region].occ.core ? ' · unrest ' + Math.round(g.c[region].occ.unrest) : '') + '</i>' : ''}<br><span class="dim">Double-click: this region</span>`;
     tip.hidden = false;
     const r = $('mapbox').getBoundingClientRect();
     tip.style.left = Math.min(e.clientX - r.left + 14, r.width - 200) + 'px'; tip.style.top = (e.clientY - r.top + 14) + 'px';
@@ -728,6 +728,7 @@
       <div class="facts"><div class="fact"><small>Stability</small>${pips(c.stab)}</div><div class="fact"><small>Army</small>${Math.round(c.army)}</div>
       <div class="fact"><small>Economy</small>${'★'.repeat(GAME.valueOf(g, key))} <span class="sub">${c.dev < 3 ? c.devProgress + '/' + (3 + c.dev) : 'max'}</span></div><div class="fact"><small>Income</small>+${GAME.nationIncome(g)} IP/yr</div>
       <div class="fact"><small>Friends</small>${GAME.friendsOf(g).length}</div><div class="fact"><small>Defeated enemies</small>${GAME.puppetsOf(g).length}</div></div>
+      <div class="sub">Foreign pressure: the superpowers can move your politics at most ${GAME.PUSH_CAP} a year${g.pushed ? ` (this year so far: ${Math.round(g.pushed)})` : ''}.</div>
       ${partiesHtml(key)}`;
     if (c.war) h += civilBox(c) + `<div class="sub" style="color:#f0a03c">If the rebels win, your government falls.</div>`;
     const sw = GAME.warOf(g, key); if (sw) h += warBox(sw);
@@ -958,7 +959,7 @@
   document.addEventListener('keydown', e => { if (e.key === 'Enter' && $('modal').hidden) endYear(); if (e.key === 'Escape' && $('modal').hidden) { sel = null; refresh(); } });
 
   // for the browser console and tests: ironCurtain.game is the game being played
-  window.ironCurtain = { get game() { return g; }, refresh, zoomTo, frontField, center,
+  window.ironCurtain = { get game() { return g; }, set game(v) { g = v; }, start, refresh, zoomTo, frontField, center,
     view: (lon, lat, k) => { const [x, y] = proj([lon, lat]); svg.call(zoom.transform, d3.zoomIdentity.translate(W / 2 - k * x, H / 2 - k * y).scale(k)); } };
   start();
 })();

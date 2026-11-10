@@ -39,6 +39,7 @@ A small, free Cold War strategy game that runs in your browser. Lead the **Unite
 - `data.js`: countries and regions (with hand-drawn shapes for lands the modern map lacks, like East Germany and South Vietnam), cities, alliances, divided nations and historical events
 - `neighbours.js`: which countries border each other (made by `node tools/build-neighbours.js`)
 - `ui.js`, `style.css`, `index.html`: the screen
+- `tools/clicktest.html`: clicks through the real game screen like a player (start screen, your nation, regions, an uprising, saving, a peace conference, a decision, the 1991 verdict, End game) and prints a pass/fail report
 - `tools/test.html`: opens a game and plays it automatically, e.g. `tools/test.html#US,10` (10 years as the USA) or `tools/test.html#US,20,EGY,still,v=45:26:2.6` (20 years, select Egypt, no animation, view centred on 45°E 26°N at zoom 2.6)
 - `lib/`: d3, topojson-client and the world map (see Credits)
 

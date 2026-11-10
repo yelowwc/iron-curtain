@@ -446,8 +446,8 @@
     const c = g.c[key], name = info(key).name;
     const dir = actor === 'ME' ? Math.sign(g.c[g.nation].a - c.a) : SIDE[actor];
     g.ip[actor] -= r.cost; c.moves++;
-    if (actName === 'propaganda') { shift(g, key, dir * 5 * STAB[c.stab]); return `Propaganda in ${name}.`; }
-    if (actName === 'aid') { shift(g, key, dir * 12 * STAB[c.stab]); if (Math.random() < 0.25) c.stab = Math.min(4, c.stab + 1); return `Aid flows to ${name}.`; }
+    if (actName === 'propaganda') { push(g, key, dir * 5 * STAB[c.stab]); return `Propaganda in ${name}.`; }
+    if (actName === 'aid') { push(g, key, dir * 12 * STAB[c.stab]); if (Math.random() < 0.25) c.stab = Math.min(4, c.stab + 1); return `Aid flows to ${name}.`; }
     if (actName === 'arm') { const camp = actor === 'ME' ? (c.owner && stateOf(g, c.owner) === g.nation ? OTHER[c.war.rebels] : nationCamp(g)) : actor; c.war.help[camp] += actor === 'ME' ? 8 : 15; addTension(g, 1); return `Weapons for your side in ${name}.`; }
     if (actName === 'troops') { c.war.troops[actor] = true; addTension(g, 8); say(g, `The ${NAME[actor]} sends its army to ${name}.`); return `Your troops land in ${name}.`; }
     if (actName === 'invade') { startWar(g, myKey(g, actor), key, 0); return `Your army crosses into ${name}!`; }
@@ -463,6 +463,16 @@
     shift(g, key, -dir * 10); g.bonus[actor] -= 2;
     say(g, `A coup in ${name} fails. The ${NAME[actor]} is blamed.`);
     return `The coup in ${name} failed.`;
+  }
+  // Outside pressure on a country. The player's own nation has a government that pushes back:
+  // only 40% of the effect lands, and foreigners can move it at most PUSH_CAP a year.
+  const PUSH_CAP = 10;
+  const pushRoom = g => Math.max(0, PUSH_CAP - (g.pushed || 0));
+  function push(g, key, amount) {
+    if (key !== g.nation) return shift(g, key, amount);
+    const n = Math.sign(amount) * Math.min(Math.abs(amount) * 0.4, pushRoom(g));
+    g.pushed = (g.pushed || 0) + Math.abs(n);
+    shift(g, key, n);
   }
   function overthrow(g, text) { if (!g.over) { g.over = { winner: null, why: 'overthrown', text }; say(g, text); } }
 
@@ -580,7 +590,7 @@
     exploit: { name: 'Exploit', help: 'Take its wealth: extra IP every year. Unrest rises fast.' },
     autonomy: { name: 'Autonomy', help: 'Let it run itself: unrest falls fastest, but it counts half.' },
   };
-  const newOcc = (unrest) => ({ unrest: unrest || 25, integ: 0, policy: 'garrison', core: false, acted: 0 });
+  const newOcc = (unrest) => ({ unrest: unrest === undefined ? 25 : unrest, integ: 0, policy: 'garrison', core: false, acted: 0 });
   // the player's territories: { id, kind, land, name, occ, worth, since }
   function territories(g, owner) {
     owner = owner || g.nation; if (!owner) return [];
@@ -817,7 +827,8 @@
       const options = [];
       for (const d of D.COUNTRIES) {
         const c = g.c[d.key], mine = c.a * s;
-        const consider = (a, value) => { if (value > 0 && check(g, side, a, d.key).ok) options.push({ a, key: d.key, value: value / ACTIONS[a].cost + Math.random() * 0.5 }); };
+        const meh = d.key === g.nation ? (pushRoom(g) > 0 ? 0.4 : 0) : 1;   // the player's nation is hard to sway: worth less of the computer's money
+        const consider = (a, value) => { value *= a === 'propaganda' || a === 'aid' ? meh : 1; if (value > 0 && check(g, side, a, d.key).ok) options.push({ a, key: d.key, value: value / ACTIONS[a].cost + Math.random() * 0.5 }); };
         if (c.war && !c.owner) consider('arm', d.val * 3 + (c.war.balance * s < 0 ? 4 : 1));
         else if (mine < 95 && mine > -70) {
           const near = mine >= 35 && mine < 65 ? 1.6 : 1;            // finish off countries close to joining
@@ -960,7 +971,7 @@
     addTension(g, -5);
     if (g.over) return;
     // ---- a new year ----
-    g.year++; g.detenteUsed = false; g.homeMoves = {};
+    g.year++; g.detenteUsed = false; g.homeMoves = {}; g.pushed = 0;
     for (const side of ['US', 'SU']) g.ip[side] = Math.min(40, Math.max(0, g.ip[side] + income(g, side) - UPKEEP * deployed(g, side)));
     if (g.nation) g.ip.ME = Math.min(30, g.ip.ME + nationIncome(g));
     for (const d of D.COUNTRIES) if (d.indep === g.year) {
@@ -1057,5 +1068,5 @@
     newGame, check, act, homeCheck, homeAct, warOf, warCheck, warHelp, makePeace, deployed, detente, endYear, choose,
     score, income, nationScore, nationIncome, friendsOf, puppetsOf, pactsOf, allied, blocOf, leaning, isHome, info, neighbours,
     borders, landsOf, capitalName, computerTurn, baseArmy, valueOf, PARTIES, PARTY, partyCheck, partyAct,
-    isUnionPart, regionsOf, free, judge, finish, sovietWeak, POLICIES, TERR_ACTIONS, territories, territoryCheck, territoryAct, lostLand, takenLand, PEACE_TERMS, termsFor, peaceChance, proposePeace, conference, formCheck, form, ownedBy, stateOf, applyNames, playerKey, warScore };
+    PUSH_CAP, isUnionPart, regionsOf, free, judge, finish, sovietWeak, POLICIES, TERR_ACTIONS, territories, territoryCheck, territoryAct, lostLand, takenLand, PEACE_TERMS, termsFor, peaceChance, proposePeace, conference, formCheck, form, ownedBy, stateOf, applyNames, playerKey, warScore };
 })(typeof window !== 'undefined' ? window : globalThis);
