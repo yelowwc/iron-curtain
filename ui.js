@@ -349,7 +349,7 @@
     towns.selectAll('circle').data(shownTowns, c => c.key + c.name).join('circle').attr('class', 'town')
       .attr('cx', c => cityXY[c.key + c.name][0]).attr('cy', c => cityXY[c.key + c.name][1]).attr('r', 1.1 * Math.pow(1 / zoomK, 0.75));
     // country names come first: city names keep clear of them
-    const fs = 7 * Math.pow(zoomK, 0.2), boxes = labelled().map(c => { const [x, y] = center[c.key], w = c.name.length * fs * 0.55; return [x * zoomK - w / 2, (y * zoomK + 9 * Math.pow(zoomK, 0.2)) - fs, x * zoomK + w / 2, y * zoomK + 9 * Math.pow(zoomK, 0.2) + 2]; });
+    const boxes = labelled().map(labelBox);
     const cand = [...(zoomK >= 2 ? D.CITIES.filter(isCapital) : []), ...shownTowns], named = [];
     for (const c of cand) {
       const [x, y] = cityXY[c.key + c.name], w = c.name.length * 3.1 + 4, b = [x * zoomK, y * zoomK - 4, x * zoomK + w, y * zoomK + 4];
@@ -585,7 +585,16 @@
       .attr('cx', x => proj([x.lon, x.lat])[0]).attr('cy', x => proj([x.lon, x.lat])[1]);
     drawLabels(); drawCities();
   }
-  const labelled = () => D.COUNTRIES.filter(c => center[c.key] && !g.c[c.key].owner && (c.key === sel || c.val >= 4 || GAME.isHome(c.key) || zoomK >= 2.2 || (zoomK >= 1.5 && c.val >= 2)));
+  // country names: the important ones first (the selection, superpowers, the most valuable); a name that would overlap one already placed is left out
+  const labelBox = c => { const fs = 7 * Math.pow(zoomK, 0.2), [x, y] = center[c.key], w = c.name.length * fs * 0.56 + 2, yy = y * zoomK + 9 * Math.pow(zoomK, 0.2); return [x * zoomK - w / 2, yy - fs * 0.85, x * zoomK + w / 2, yy + fs * 0.25]; };
+  const overlaps = (b, boxes) => boxes.some(o => b[0] < o[2] && b[2] > o[0] && b[1] < o[3] && b[3] > o[1]);
+  function labelled() {
+    const cand = D.COUNTRIES.filter(c => center[c.key] && !g.c[c.key].owner && (c.key === sel || c.val >= 4 || GAME.isHome(c.key) || zoomK >= 2.2 || (zoomK >= 1.5 && c.val >= 2)));
+    const rank = c => (c.key === sel ? 1000 : 0) + (c.key === g.nation ? 500 : 0) + (GAME.isHome(c.key) ? 100 : 0) + GAME.valueOf(g, c.key) * 10 - c.name.length * 0.1;
+    const out = [], boxes = [];
+    for (const c of cand.sort((a, b) => rank(b) - rank(a))) { const b = labelBox(c); if (overlaps(b, boxes)) continue; boxes.push(b); out.push(c); }
+    return out;
+  }
   function drawLabels() {
     if (!g) return;
     labels.selectAll('text').data(labelled(), c => c.key).join('text').attr('class', 'label')
@@ -634,8 +643,9 @@
   function warBox(sw) {
     const A = GAME.info(sw.att).name, B = GAME.info(sw.def).name, f = (sw.front + 100) / 2;
     let h = `<div class="warbox"><b>⚔ War: ${esc(A)} attacked ${esc(B)}</b> <span class="sub">year ${sw.years + 1}</span>
+      <div class="wsides"><span><b>${esc(A)}</b><small>army ${Math.round(g.c[sw.att].army)}</small></span><span><b>${esc(B)}</b><small>army ${Math.round(g.c[sw.def].army)}</small></span></div>
       <div class="warbar"><i style="width:${f}%;background:#e0903c"></i><i style="flex:1;background:#5aa39a"></i></div>
-      <div class="ends"><span>${esc(A)} · army ${Math.round(g.c[sw.att].army)}</span><span>${sw.front > 15 ? 'advancing' : sw.front < -15 ? 'pushed back' : 'stalemate'}</span><span>army ${Math.round(g.c[sw.def].army)} · ${esc(B)}</span></div>
+      <div class="wstate">${sw.front > 15 ? `${esc(A)} is advancing` : sw.front < -15 ? `${esc(A)} is pushed back` : 'Stalemate'}</div>
       ${['att', 'def'].filter(s => sw.capFell && sw.capFell[s]).map(s => `<div class="sub" style="color:#f0a03c">${esc(GAME.capitalName(sw[s]))} has fallen.</div>`).join('')}
       <div class="sub">${sw.limited ? 'A border war: after 3 years at most it ends, and at worst a strip of land changes hands.' : sw.annexOnWin ? 'A war of conquest: if the attacker wins, the country disappears into it. After 8 years: a truce.' : 'If the attacker wins, it installs a friendly government. After 8 years: a truce.'}</div>
       ${['US', 'SU'].filter(p => sw.troops[p]).map(p => `<div class="sub">${p === 'US' ? 'American' : 'Soviet'} troops fight for ${esc(GAME.info(sw[sw.troops[p]]).name)}.</div>`).join('')}</div>`;

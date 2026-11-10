@@ -70,6 +70,11 @@ main { flex: 1; display: flex; min-height: 0; }
 .act small { grid-column: 1 / -1; color: var(--dim); font-size: 12.5px; }
 .warbox { margin-top: 12px; padding: 9px 11px; border-radius: 8px; border: 1px solid #5a3a22; background: #21180f; }
 .warbar { display: flex; height: 10px; border-radius: 5px; overflow: hidden; margin: 6px 0 3px; }
+.wsides { display: flex; justify-content: space-between; gap: 10px; margin-top: 8px; font-size: 12px; }
+.wsides span { display: flex; flex-direction: column; min-width: 0; }
+.wsides span:last-child { text-align: right; }
+.wsides small { color: var(--dim); font-size: 11px; }
+.wstate { text-align: center; font-size: 12px; color: var(--gold); }
 .empty { color: var(--dim); }
 .empty li { margin-bottom: 8px; }
 

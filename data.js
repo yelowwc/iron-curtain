@@ -537,7 +537,7 @@
       when: (g, H) => H.holds(g, 'SUN', 'CRM'), fx: (g, H) => H.set(g, 'CRM', { toUkr: true }) },
     { y: 1955, title: 'The Bandung Conference', text: 'Leaders of Asia and Africa meet in Indonesia and refuse to pick a side.',
       fx: (g, H) => ['IND', 'IDN', 'EGY', 'MMR', 'LKA'].forEach(k => g.c[k] && !g.c[k].owner && (g.c[k].a = Math.round(g.c[k].a * 0.5))) },
-    { y: 1956, title: 'Budapest rises', text: 'Hungarians rise up against Soviet rule.', who: 'SU',
+    { y: 1956, title: 'Budapest rises', text: 'Hungarians rise up against Soviet rule.', who: 'SU', when: g => g.nation !== 'HUN',
       options: [
         { label: 'Send in the tanks', hint: 'Hungary stays yours · −4 score · tension +6', fx: (g, H) => { H.setAlign(g, 'HUN', -75); H.bonus(g, 'SU', -4); H.tension(g, 6); } },
         { label: 'Let Hungary go', hint: 'Hungary becomes neutral · −6 score', fx: (g, H) => { H.set(g, 'HUN', { a: 0, gov: 'Democracy' }); H.bonus(g, 'SU', -6); } }] },
@@ -578,7 +578,7 @@
     { y: 1965, title: 'Kashmir burns', text: 'Pakistan and India go to war over Kashmir.', fx: (g, H) => H.limited(g, 'PAK', 'IND', 0) },
     { y: 1967, title: 'The Six-Day War', text: 'Israel strikes Egypt first, and takes the West Bank from Jordan.',
       fx: (g, H) => { H.war(g, 'ISR', 'EGY', 40); if (H.holds(g, 'JOR', 'PSE')) H.transfer(g, 'PSE', 'ISR'); } },
-    { y: 1968, title: 'The Prague Spring', text: 'Czechoslovakia tries "socialism with a human face".', who: 'SU', when: g => g.c.CSK.a < 0,
+    { y: 1968, title: 'The Prague Spring', text: 'Czechoslovakia tries "socialism with a human face".', who: 'SU', when: g => g.c.CSK.a < 0 && g.nation !== 'CSK',
       options: [
         { label: 'Invade', hint: 'Czechoslovakia stays yours · −4 score', fx: (g, H) => { H.setAlign(g, 'CSK', -75); H.bonus(g, 'SU', -4); } },
         { label: 'Allow the reforms', hint: 'Czechoslovakia drifts West', fx: (g, H) => H.shift(g, 'CSK', 35) }] },
@@ -638,7 +638,7 @@
       when: (g, H) => H.holds(g, 'ESP', 'CAT') && !/Dictatorship|Junta/.test(g.c.ESP.gov), fx: (g, H) => { H.stab(g, 'CAT', 1); H.stab(g, 'BAS', 1); } },
     // ======================= the 1980s =======================
     { y: 1980, title: 'The Iran–Iraq War', text: 'Iraq invades Iran, expecting a quick victory.', fx: (g, H) => H.war(g, 'IRQ', 'IRN', 15) },
-    { y: 1980, title: 'Solidarity', text: 'Ten million Polish workers join a free trade union.', who: 'SU', when: g => g.c.POL.a < 0,
+    { y: 1980, title: 'Solidarity', text: 'Ten million Polish workers join a free trade union.', who: 'SU', when: g => g.c.POL.a < 0 && g.nation !== 'POL',
       options: [
         { label: 'Martial law', hint: 'Tension +5 · Poland stays, barely', fx: (g, H) => { H.tension(g, 5); H.shift(g, 'POL', -5); } },
         { label: 'Let them talk', hint: 'Poland drifts West', fx: (g, H) => H.shift(g, 'POL', 25) }] },
@@ -673,7 +673,7 @@
     { y: 1991, title: 'Ichkeria', text: 'Dzhokhar Dudayev seizes power in Grozny and declares Chechnya independent of Russia.',
       when: (g, H) => H.holds(g, 'SUN', 'CHC') && H.free(g, 'UKR'), fx: (g, H) => H.rise(g, 'CHC') },
     { y: 1991, title: 'Yugoslavia falls apart', text: 'Slovenia and Croatia declare independence; the federation unravels.',
-      when: (g, H) => H.free(g, 'YUG') && H.regions(g, 'YUG').length > 0 && (H.weak(g) || g.c.YUG.a > -30), fx: (g, H) => H.regions(g, 'YUG').forEach(k => H.freeUnion(g, k, 15)) },
+      when: (g, H) => g.nation !== 'YUG' && H.free(g, 'YUG') && H.regions(g, 'YUG').length > 0 && (H.weak(g) || g.c.YUG.a > -30), fx: (g, H) => H.regions(g, 'YUG').forEach(k => H.freeUnion(g, k, 15)) },
     { y: 1991, title: 'Desert Storm', text: "A US-led coalition drives Iraq's army out of Kuwait in a hundred hours.",
       when: g => g.c.KWT.owner === 'IRQ' || g.wars.some(w => w.att === 'IRQ' && w.def === 'KWT'),
       fx: (g, H) => { H.peace(g, 'IRQ', 'KWT'); if (g.c.KWT.owner === 'IRQ') H.liberate(g, 'KWT'); H.set(g, 'KWT', { a: 40, gov: 'Monarchy' }); g.c.IRQ.army *= 0.5; H.stab(g, 'IRQ', -1); H.bonus(g, 'US', 5); H.tension(g, 4); } },
@@ -683,7 +683,7 @@
     // ======================= after the Cold War =======================
     { y: 1991, title: 'War in Croatia', text: 'The Yugoslav army and Serb militias fight the new Croatian state.', when: (g, H) => H.free(g, 'HRV') && H.free(g, 'YUG'), fx: (g, H) => H.limited(g, 'YUG', 'HRV', 10) },
     { y: 1992, title: 'War in Bosnia', text: 'Sarajevo is besieged as Bosnia sinks into the worst fighting in Europe since 1945.', when: (g, H) => H.free(g, 'BIH') && H.free(g, 'YUG'), fx: (g, H) => H.limited(g, 'YUG', 'BIH', 15) },
-    { y: 1993, title: 'The Velvet Divorce', text: 'Czechs and Slovaks part ways peacefully.', when: (g, H) => H.holds(g, 'CSK', 'SVK') && /Democracy|Republic/.test(g.c.CSK.gov), fx: (g, H) => H.freeUnion(g, 'SVK', 30) },
+    { y: 1993, title: 'The Velvet Divorce', text: 'Czechs and Slovaks part ways peacefully.', when: (g, H) => g.nation !== 'CSK' && H.holds(g, 'CSK', 'SVK') && /Democracy|Republic/.test(g.c.CSK.gov), fx: (g, H) => H.freeUnion(g, 'SVK', 30) },
     { y: 1994, title: 'Mandela is president', text: 'South Africa holds its first elections open to all races.', when: g => g.c.ZAF.gov !== 'Democracy' && !g.c.ZAF.owner,
       fx: (g, H) => { H.set(g, 'ZAF', { gov: 'Democracy' }); H.stab(g, 'ZAF', 1); H.shift(g, 'ZAF', 10); } },
     { y: 1994, title: 'The First Chechen War', text: 'Russian tanks roll into Grozny to crush Chechen independence.', when: (g, H) => H.holds(g, 'SUN', 'CHC') && !g.c.CHC.war && H.free(g, 'UKR'), fx: (g, H) => { H.rise(g, 'CHC'); H.tension(g, 3); } },
@@ -719,6 +719,170 @@
   // a weak Soviet Union can still fall apart after 1991
   { const end = EVENTS.find(e => e.title === 'The Soviet Union is dissolved');
     for (const y of [1996, 2001, 2006, 2011, 2016]) EVENTS.push(Object.assign({}, end, { y, when: (g, H) => H.holds(g, 'SUN', 'UKR') && H.weak(g) })); }
+
+  // Decisions for a player who leads a nation. They only happen to the player (`nations`: who gets them);
+  // the computer's countries follow the history events above. fx(game, H, k): k is the player's country.
+  const CAMP = (g, k) => g.c[k].a >= 0 ? 1 : -1;
+  const NATION_EVENTS = [
+    // ---- for many nations ----
+    { y: 1955, nations: ['IND', 'IDN', 'EGY', 'MMR', 'LKA', 'PAK', 'AFG', 'IRN', 'IRQ', 'JOR', 'LBN', 'SAU', 'SYR', 'TUR', 'YEM', 'ETH', 'LBR', 'CHN', 'JPN', 'PHL', 'THA', 'NPL'],
+      title: 'An invitation to Bandung', text: 'Twenty-nine countries of Asia and Africa meet in Indonesia to talk about a third way between the blocs.',
+      options: [
+        { label: 'Go, and speak for the third way', hint: 'You move toward the middle · +2 score', fx: (g, H, k) => { H.setAlign(g, k, Math.round(g.c[k].a * 0.5)); H.glory(g, 2); } },
+        { label: 'Stay with your friends', hint: '10 closer to the camp you lean to', fx: (g, H, k) => H.shift(g, k, 10 * CAMP(g, k)) }] },
+    { y: 1961, nations: 'any', when: (g, H, k) => Math.abs(g.c[k].a) < 40 && !H.isHome(k),
+      title: 'The Non-Aligned Movement', text: 'Tito, Nehru and Nasser invite the countries that belong to neither bloc to Belgrade.',
+      options: [
+        { label: 'Join the movement', hint: 'Halfway to neutral · +2 score · +1 IP', fx: (g, H, k) => { H.setAlign(g, k, Math.round(g.c[k].a * 0.5)); H.glory(g, 2); H.pay(g, 1); } },
+        { label: 'Keep your own counsel', hint: 'Nothing changes', fx: () => { } }] },
+    { y: 1964, nations: ['IND', 'ISR', 'ZAF', 'ARG', 'BRA', 'EGY', 'IRN', 'PAK', 'JPN', 'FRG', 'ITA', 'SWE', 'CHN', 'FRA', 'GBR'],
+      title: 'The Bomb', text: 'Your scientists say they could build an atomic bomb within a few years.',
+      options: [
+        { label: 'Build it', hint: '−6 IP · army +6 · +4 score · tension +8', fx: (g, H, k) => { H.pay(g, -6); H.army(g, k, 6); H.glory(g, 4); H.tension(g, 8); } },
+        { label: 'Sign the treaty against the Bomb', hint: 'Tension −3 · +1 score · stability +1', fx: (g, H, k) => { H.tension(g, -3); H.glory(g, 1); H.stab(g, k, 1); } }] },
+    { y: 1968, nations: 'any', when: (g, H, k) => /Democracy|Republic/.test(g.c[k].gov) && g.c[k].a > 0,
+      title: 'The students march', text: 'Students occupy the universities and workers join them on strike.',
+      options: [
+        { label: 'Give them reforms', hint: 'Socialists +8 · stability −1', fx: (g, H, k) => { H.party(g, k, 'soc', 8); H.stab(g, k, -1); } },
+        { label: 'Send in the police', hint: 'Conservatives +6 · −1 score', fx: (g, H, k) => { H.party(g, k, 'con', 6); H.glory(g, -1); } }] },
+    { y: 1973, nations: ['SAU', 'IRN', 'IRQ', 'KWT', 'LBY', 'DZA', 'VEN', 'GLF', 'NGA', 'EGY', 'SYR'],
+      title: 'The oil weapon', text: 'The Arab producers will cut oil to the West for backing Israel. They ask you to join.',
+      options: [
+        { label: 'Join the embargo', hint: '+6 IP · 15 toward the East · tension +4', fx: (g, H, k) => { H.pay(g, 6); H.shift(g, k, -15); H.tension(g, 4); } },
+        { label: 'Keep pumping', hint: '+2 IP · 10 toward the West', fx: (g, H, k) => { H.pay(g, 2); H.shift(g, k, 10); } }] },
+    { y: 1982, nations: ['MEX', 'BRA', 'ARG', 'CHL', 'PER', 'VEN', 'COL', 'ECU', 'BOL', 'URY', 'PRY', 'CRI', 'DOM', 'PHL', 'NGA', 'EGY', 'TUR', 'POL', 'YUG', 'ROU', 'HUN'],
+      title: 'The debt crisis', text: 'Interest rates soar and your country cannot pay its foreign debts.',
+      options: [
+        { label: "Take the IMF's deal", hint: '+3 IP · 10 toward the West · stability −1', fx: (g, H, k) => { H.pay(g, 3); H.shift(g, k, 10); H.stab(g, k, -1); } },
+        { label: 'Stop paying', hint: '10 toward the East · stability −1 · +1 score at home', fx: (g, H, k) => { H.shift(g, k, -10); H.stab(g, k, -1); H.glory(g, 1); } }] },
+    { y: 1989, nations: ['POL', 'HUN', 'CSK', 'GDR', 'ROU', 'BGR', 'ALB', 'MNG'], when: (g, H, k) => g.c[k].gov === 'Socialist' && (g.c.GDR.a > -80 || g.reform),
+      title: 'The people in the squares', text: 'Huge crowds demand free elections. Moscow will not send tanks to save you.',
+      options: [
+        { label: 'Hold free elections', hint: 'Democracy · 40 toward the West · stability −1', fx: (g, H, k) => { H.set(g, k, { gov: 'Democracy' }); H.shift(g, k, 40); H.stab(g, k, -1); } },
+        { label: 'Hold on to power', hint: 'Stability −2 · half a chance of a rising', fx: (g, H, k) => { H.stab(g, k, -2); if (Math.random() < 0.5) H.civilWar(g, k, 'US', 10); } }] },
+    { y: 1995, nations: ['AUT', 'SWE', 'FIN', 'NOR', 'CHE', 'ISL', 'POL', 'HUN', 'CSK', 'ROU', 'BGR', 'TUR', 'CYP', 'IRL', 'ESP', 'PRT', 'GRC', 'DNK'],
+      when: (g, H, k) => H.pactOpen(g, 'eu', k), title: 'Knocking on Brussels\' door', text: 'The European Union is ready to talk about letting you in.',
+      options: [
+        { label: 'Apply to join', hint: 'You join the EU · 10 toward the West', fx: (g, H, k) => { H.joinPact(g, 'eu', k); H.shift(g, k, 10); } },
+        { label: 'Stay outside', hint: 'Nothing changes', fx: () => { } }] },
+    // ---- for one nation ----
+    { y: 1947, nations: ['IND'], title: "Nehru's choice", text: 'India is free. Its first prime minister must decide where it stands in the world.',
+      options: [
+        { label: 'Belong to no bloc', hint: 'Neutral · +3 score', fx: (g, H, k) => { H.setAlign(g, k, 0); H.glory(g, 3); } },
+        { label: 'Lean on Moscow', hint: '30 toward the East · +3 IP', fx: (g, H, k) => { H.shift(g, k, -30); H.pay(g, 3); } },
+        { label: 'Lean on the West', hint: '30 toward the West · +3 IP', fx: (g, H, k) => { H.shift(g, k, 30); H.pay(g, 3); } }] },
+    { y: 1948, nations: ['YUG'], title: "Stalin's anger", text: 'Moscow demands that you obey. Tito would rather not.',
+      options: [
+        { label: 'Stand up to Stalin', hint: 'Neutral · stability +1 · tension +5', fx: (g, H, k) => { H.setAlign(g, k, 0); H.stab(g, k, 1); H.tension(g, 5); } },
+        { label: 'Obey Moscow', hint: 'Back in the Soviet bloc', fx: (g, H, k) => H.setAlign(g, k, -65) }] },
+    { y: 1949, nations: ['CHN'], when: g => !!g.c.CHN.war, title: 'The last chance', text: "Mao's armies are crossing the Yangtze. The Nationalist government must act.",
+      options: [
+        { label: 'Beg America for more help', hint: 'A big push for your side · 15 toward the West', fx: (g, H, k) => { H.support(g, k, 'US', 25); H.shift(g, k, 15); } },
+        { label: 'Make peace with the Communists', hint: 'The civil war ends · Communists +15 · 25 toward the East', fx: (g, H, k) => { H.endCivil(g, k); H.party(g, k, 'com', 15); H.shift(g, k, -25); } }] },
+    { y: 1950, nations: ['TUR', 'GRC', 'PHL', 'THA', 'COL', 'ETH', 'AUS', 'CAN', 'GBR', 'FRA', 'NLD', 'BEL', 'NZL'], when: g => !!g.c.KOR.war,
+      title: 'Soldiers for Korea', text: 'The United Nations asks its members to help defend South Korea.',
+      options: [
+        { label: 'Send a brigade', hint: '15 toward the West · +2 score · army −1', fx: (g, H, k) => { H.shift(g, k, 15); H.glory(g, 2); H.army(g, k, -1); H.support(g, 'KOR', 'US', 5); } },
+        { label: 'Stay out of it', hint: 'Nothing changes', fx: () => { } }] },
+    { y: 1951, nations: ['IRN'], title: 'Our oil', text: 'Parliament wants to take the oil fields back from the British company.',
+      options: [
+        { label: 'Nationalise the oil', hint: '+4 IP · 15 toward the East · stability −1', fx: (g, H, k) => { H.pay(g, 4); H.shift(g, k, -15); H.stab(g, k, -1); } },
+        { label: 'Leave it to the British', hint: '10 toward the West', fx: (g, H, k) => H.shift(g, k, 10) }] },
+    { y: 1952, nations: ['EGY'], when: g => g.c.EGY.gov === 'Monarchy', title: 'The Free Officers', text: 'Young army officers plot against the corrupt king.',
+      options: [
+        { label: 'Back the officers', hint: 'A republic · stability +1 · Nationalists +10', fx: (g, H, k) => { H.set(g, k, { gov: 'Republic' }); H.stab(g, k, 1); H.party(g, k, 'nat', 10); } },
+        { label: 'Stand by the king', hint: 'Stability −1', fx: (g, H, k) => H.stab(g, k, -1) }] },
+    { y: 1953, nations: ['GTM'], title: 'Land for the peasants', text: 'Most of the good land belongs to an American fruit company, and lies idle.',
+      options: [
+        { label: 'Hand it to the peasants', hint: 'Socialists +12 · 20 toward the East · America will be angry', fx: (g, H, k) => { H.party(g, k, 'soc', 12); H.shift(g, k, -20); } },
+        { label: 'Leave it alone', hint: '10 toward the West · stability −1', fx: (g, H, k) => { H.shift(g, k, 10); H.stab(g, k, -1); } }] },
+    { y: 1956, nations: ['EGY'], title: 'The canal', text: 'The Suez Canal is run by a British and French company. You could take it.',
+      options: [
+        { label: 'Nationalise the canal', hint: '+5 IP · +4 score · tension +6 · Israel may attack', fx: (g, H, k) => { H.pay(g, 5); H.glory(g, 4); H.tension(g, 6); if (Math.random() < 0.6) H.attack(g, 'ISR', k, 20); } },
+        { label: 'Negotiate with London', hint: '10 toward the West', fx: (g, H, k) => H.shift(g, k, 10) }] },
+    { y: 1956, nations: ['HUN'], when: g => g.c.HUN.a < -30, title: "Nagy's choice", text: 'Budapest has risen. The crowds want you to leave the Warsaw Pact.',
+      options: [
+        { label: 'Leave the Warsaw Pact', hint: 'Neutral · the Soviet army will probably invade', fx: (g, H, k) => { H.setAlign(g, k, 0); H.leavePact(g, 'warsaw', k); if (Math.random() < 0.8) H.attack(g, 'SUN', k, 30); } },
+        { label: 'Stay loyal to Moscow', hint: 'Back in the bloc · stability +1 · −2 score', fx: (g, H, k) => { H.setAlign(g, k, -60); H.stab(g, k, 1); H.glory(g, -2); } }] },
+    { y: 1958, nations: ['FRA'], title: 'Algeria and the general', text: 'The war in Algeria is tearing France apart. The army wants de Gaulle back.',
+      options: [
+        { label: 'Call de Gaulle', hint: 'Stability +2 · your own course: 10 toward the middle', fx: (g, H, k) => { H.stab(g, k, 2); H.shift(g, k, -10); } },
+        { label: 'Muddle on', hint: 'Stability −1', fx: (g, H, k) => H.stab(g, k, -1) }] },
+    { y: 1960, nations: ['CUB'], when: g => g.c.CUB.a < 20, title: 'The sugar quota', text: 'Washington stops buying Cuban sugar. Moscow offers to buy it all.',
+      options: [
+        { label: 'Sell to Moscow', hint: '+4 IP · 30 toward the East', fx: (g, H, k) => { H.pay(g, 4); H.shift(g, k, -30); } },
+        { label: 'Make up with Washington', hint: '20 toward the West · Communists −10', fx: (g, H, k) => { H.shift(g, k, 20); H.party(g, k, 'com', -10); } }] },
+    { y: 1966, nations: ['FRA'], when: (g, H, k) => H.inPact(g, 'nato', k), title: 'Out of the command', text: 'De Gaulle wants French forces out of NATO\'s command and American bases out of France.',
+      options: [
+        { label: 'Leave the command', hint: '+3 score · 15 toward the middle', fx: (g, H, k) => { H.glory(g, 3); H.shift(g, k, -15); } },
+        { label: 'Stay in', hint: '5 toward the West', fx: (g, H, k) => H.shift(g, k, 5) }] },
+    { y: 1967, nations: ['GRC'], when: g => g.c.GRC.gov !== 'Junta', title: 'The colonels', text: 'Army colonels seize Athens before an election they fear the left will win.',
+      options: [
+        { label: 'Accept the colonels', hint: 'A junta · stability +1 · −2 score', fx: (g, H, k) => { H.set(g, k, { gov: 'Junta' }); H.stab(g, k, 1); H.glory(g, -2); } },
+        { label: 'Resist', hint: 'Stability −1 · Liberals +8', fx: (g, H, k) => { H.stab(g, k, -1); H.party(g, k, 'lib', 8); } }] },
+    { y: 1968, nations: ['CSK'], when: g => g.c.CSK.a < 0, title: 'Socialism with a human face', text: 'Your reformers want free speech and an end to censorship.',
+      options: [
+        { label: 'Go ahead with the reforms', hint: '30 toward the West · Moscow may invade', fx: (g, H, k) => { H.shift(g, k, 30); if (Math.random() < 0.7) H.attack(g, 'SUN', k, 40); } },
+        { label: 'Keep the hard line', hint: '10 toward the East · stability −1', fx: (g, H, k) => { H.shift(g, k, -10); H.stab(g, k, -1); } }] },
+    { y: 1970, nations: ['POL'], title: 'The price of bread', text: 'The planners want to raise food prices just before Christmas.',
+      options: [
+        { label: 'Raise the prices', hint: '+3 IP · stability −1', fx: (g, H, k) => { H.pay(g, 3); H.stab(g, k, -1); } },
+        { label: 'Freeze them', hint: '−2 IP · stability +1', fx: (g, H, k) => { H.pay(g, -2); H.stab(g, k, 1); } }] },
+    { y: 1970, nations: ['PAK'], when: (g, H) => H.holds(g, 'PAK', 'BGD'), title: 'East Pakistan votes', text: 'The Awami League wins the election and demands self-rule for East Pakistan.',
+      options: [
+        { label: 'Let East Pakistan go', hint: 'Bangladesh is born in peace · +2 score · stability +1', fx: (g, H, k) => { H.freeUnion(g, 'BGD', 0); H.glory(g, 2); H.stab(g, k, 1); } },
+        { label: 'Send the army', hint: 'East Pakistan rises · India may join in', fx: (g, H, k) => { H.rise(g, 'BGD'); H.glory(g, -2); } }] },
+    { y: 1972, nations: ['EGY'], when: g => g.c.EGY.a < 0, title: 'The Soviet advisers', text: 'Twenty thousand Soviet advisers are in Egypt. They give you weapons, and orders.',
+      options: [
+        { label: 'Send them home', hint: '25 toward the West', fx: (g, H, k) => H.shift(g, k, 25) },
+        { label: 'Keep them', hint: 'Army +3 · 10 toward the East', fx: (g, H, k) => { H.army(g, k, 3); H.shift(g, k, -10); } }] },
+    { y: 1974, nations: ['PRT'], title: 'The empire', text: 'After the revolution, the soldiers want to come home from Angola and Mozambique.',
+      options: [
+        { label: 'Let the colonies go', hint: '+3 score · stability +1', fx: (g, H, k) => { H.glory(g, 3); H.stab(g, k, 1); } },
+        { label: 'Fight on in Africa', hint: 'Army −3 · −2 IP · stability −1', fx: (g, H, k) => { H.army(g, k, -3); H.pay(g, -2); H.stab(g, k, -1); } }] },
+    { y: 1975, nations: ['ESP'], when: g => /Dictatorship|Junta/.test(g.c.ESP.gov), title: 'Franco is dead', text: 'The old dictator has died. The young king must decide what comes next.',
+      options: [
+        { label: 'Bring back democracy', hint: 'Democracy · 15 toward the West · stability −1', fx: (g, H, k) => { H.set(g, k, { gov: 'Democracy' }); H.shift(g, k, 15); H.stab(g, k, -1); } },
+        { label: 'Keep the regime', hint: 'Stability −1 · −1 score', fx: (g, H, k) => { H.stab(g, k, -1); H.glory(g, -1); } }] },
+    { y: 1980, nations: ['POL'], when: g => g.c.POL.gov === 'Socialist', title: 'A free trade union', text: 'Ten million workers have joined a free trade union. They want it recognised.',
+      options: [
+        { label: 'Recognise the union', hint: 'Liberals +10 · 15 toward the West · stability −1', fx: (g, H, k) => { H.party(g, k, 'lib', 10); H.shift(g, k, 15); H.stab(g, k, -1); } },
+        { label: 'Martial law', hint: 'Stability +1 · −2 score · 10 toward the East', fx: (g, H, k) => { H.stab(g, k, 1); H.glory(g, -2); H.shift(g, k, -10); } }] },
+    { y: 1982, nations: ['ARG'], when: (g, H, k) => !H.atWar(g, k), title: 'Las Malvinas', text: 'The junta could win back the Falkland Islands from Britain, and win back the people.',
+      options: [
+        { label: 'Invade the islands', hint: 'War with Britain · stability +1 for now', fx: (g, H, k) => { H.stab(g, k, 1); H.borderWar(g, k, 'GBR', 0); } },
+        { label: 'Keep talking', hint: 'Stability −1', fx: (g, H, k) => H.stab(g, k, -1) }] },
+    { y: 1987, nations: ['KOR'], when: g => g.c.KOR.gov !== 'Democracy', title: 'The June struggle', text: 'Millions march for the right to choose their president.',
+      options: [
+        { label: 'Hold free elections', hint: 'Democracy · +2 score · stability −1', fx: (g, H, k) => { H.set(g, k, { gov: 'Democracy' }); H.glory(g, 2); H.stab(g, k, -1); } },
+        { label: 'Crack down', hint: 'Stability −1 · −2 score', fx: (g, H, k) => { H.stab(g, k, -1); H.glory(g, -2); } }] },
+    { y: 1989, nations: ['CHN'], when: g => g.c.CHN.gov !== 'Democracy', title: 'The square', text: 'Students have filled Tiananmen Square for weeks, demanding reform.',
+      options: [
+        { label: 'Send in the army', hint: 'Stability +1 · −4 score · 10 toward the East', fx: (g, H, k) => { H.stab(g, k, 1); H.glory(g, -4); H.shift(g, k, -10); } },
+        { label: 'Talk to the students', hint: 'Liberals +15 · stability −2', fx: (g, H, k) => { H.party(g, k, 'lib', 15); H.stab(g, k, -2); } }] },
+    { y: 1990, nations: ['ZAF'], when: g => g.c.ZAF.gov !== 'Democracy', title: 'Free Mandela?', text: 'Nelson Mandela has been in prison for 27 years. The world is watching.',
+      options: [
+        { label: 'Free him and end apartheid', hint: 'Democracy · +3 score · stability −1', fx: (g, H, k) => { H.set(g, k, { gov: 'Democracy' }); H.glory(g, 3); H.stab(g, k, -1); } },
+        { label: 'Hold out', hint: 'Stability −1 · −2 score', fx: (g, H, k) => { H.stab(g, k, -1); H.glory(g, -2); } }] },
+    { y: 1990, nations: ['IRQ'], when: (g, H, k) => H.free(g, 'KWT') && !H.atWar(g, k), title: 'Kuwait', text: 'Kuwait is rich, small, and pumping oil you say is yours.',
+      options: [
+        { label: 'Invade Kuwait', hint: 'A war of conquest · the Americans may come', fx: (g, H, k) => H.conquestWar(g, k, 'KWT', 40) },
+        { label: 'Settle it with talks', hint: '+2 IP', fx: (g, H, k) => H.pay(g, 2) }] },
+    { y: 1991, nations: ['YUG'], when: (g, H) => H.regions(g, 'YUG').length > 0, title: 'Slovenia and Croatia', text: 'Your republics want to leave the federation.',
+      options: [
+        { label: 'Let them go', hint: 'They become independent · +3 score', fx: (g, H) => { H.regions(g, 'YUG').forEach(r => H.freeUnion(g, r, 15)); H.glory(g, 3); } },
+        { label: 'Hold the federation together', hint: 'They rise up against you', fx: (g, H) => H.regions(g, 'YUG').forEach(r => H.rise(g, r)) }] },
+    { y: 1992, nations: ['CSK'], when: (g, H) => H.holds(g, 'CSK', 'SVK'), title: 'The Slovaks want to go', text: 'Slovak leaders want a country of their own.',
+      options: [
+        { label: 'Agree to a velvet divorce', hint: 'Slovakia goes in peace · +2 score', fx: (g, H) => { H.freeUnion(g, 'SVK', 30); H.glory(g, 2); } },
+        { label: 'Refuse', hint: 'Slovakia grows restless', fx: (g, H) => H.stab(g, 'SVK', -2) }] },
+    { y: 2003, nations: ['GBR', 'FRA', 'ITA', 'ESP', 'POL', 'FRG', 'TUR', 'AUS', 'JPN', 'KOR', 'NLD', 'DNK', 'CAN'], when: g => g.wars.some(w => w.att === 'USA' && w.def === 'IRQ'),
+      title: 'The coalition', text: 'Washington asks you to send troops to Iraq.',
+      options: [
+        { label: 'Join the coalition', hint: '10 toward the West · stability −1', fx: (g, H, k) => { H.shift(g, k, 10); H.stab(g, k, -1); } },
+        { label: 'Refuse', hint: '+2 score · 5 toward the middle', fx: (g, H, k) => { H.glory(g, 2); H.shift(g, k, -5 * CAMP(g, k)); } }] },
+  ];
+  EVENTS.push(...NATION_EVENTS);
 
   // Alliances: founded in `year` (ended in `ends`); members that lean the right way join. Members defend each other in wars.
   const PACTS = [

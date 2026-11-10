@@ -392,6 +392,19 @@
     troops: (g, key, side) => { const c = g.c[key]; if (c && c.war && !c.war.troops[side]) { c.war.troops[side] = true; say(g, `The ${NAME[side]} sends its army to ${info(key).name}.`); } },
     free, holds: (g, owner, key) => !!(g.c[key] && g.c[key].owner === owner), regions: regionsOf,
     weak: g => sovietWeak(g), score: (g, side) => score(g, side),
+    // for the player's own decisions
+    pay: (g, n) => { g.ip.ME = Math.max(0, g.ip.ME + n); },
+    glory: (g, n) => { g.bonus.ME += n; },
+    army: (g, key, n) => { const c = g.c[key]; if (c) c.army = Math.max(1, c.army + n); },
+    party: (g, key, id, n) => { if (g.c[key] && g.c[key].parties) boostParty(g, key, id, n); },
+    inPact: (g, id, key) => g.pacts.some(p => p.id === id && p.members.includes(key)),
+    pactOpen: (g, id, key) => g.pacts.some(p => p.id === id && !p.members.includes(key)),
+    joinPact: (g, id, key) => { const p = g.pacts.find(x => x.id === id); if (p && !p.members.includes(key)) { p.members.push(key); say(g, `${info(key).name} joins ${p.name}.`); } },
+    leavePact: (g, id, key) => { const p = g.pacts.find(x => x.id === id); if (p && p.members.includes(key)) { p.members = p.members.filter(m => m !== key); say(g, `${info(key).name} leaves ${p.name}.`); } },
+    isHome, atWar: (g, key) => !!warOf(g, key),
+    // the player chose this war: no "hawks held back" here
+    borderWar: (g, att, def, front) => { const w = startWar(g, att, def, front); if (w) { w.limited = true; w.noCut = true; } },
+    conquestWar: (g, att, def, front) => { const w = startWar(g, att, def, front); if (w) w.annexOnWin = true; },
   };
 
   // ================= moves on other countries =================
@@ -830,7 +843,13 @@
   function runEvents(g) {
     allianceYear(g);
     for (const e of D.EVENTS) {
-      if (e.y !== g.year || (e.when && !e.when(g, H))) continue;
+      if (e.y !== g.year) continue;
+      if (e.nations) {                                                   // a decision only the player's nation gets
+        const k = g.nation;
+        if (!k || g.over || !free(g, k) || (e.nations !== 'any' && !e.nations.includes(k)) || (e.when && !e.when(g, H, k))) continue;
+        say(g, `${e.title}. ${e.text}`); g.pending.push(e); continue;
+      }
+      if (e.when && !e.when(g, H)) continue;
       say(g, `${e.title}. ${e.text}`);
       if (e.fx) e.fx(g, H);
       if (e.options) {
@@ -842,7 +861,7 @@
   }
   function choose(g, i) {
     const e = g.pending.shift(); if (!e) return;
-    e.options[i].fx(g, H); say(g, `You chose: ${e.options[i].label}.`);
+    e.options[i].fx(g, H, g.nation); say(g, `You chose: ${e.options[i].label}.`); applyNames(g);
   }
 
   // ================= the end of a year =================

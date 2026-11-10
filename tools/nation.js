@@ -8,6 +8,7 @@ for (const key of keys) {
     const g = GAME.newGame(key);
     let guard = 0;
     while (!g.over && !g.verdict && guard++ < 200) {
+      while (g.pending.length) GAME.choose(g, Math.floor(Math.random() * g.pending[0].options.length));
       const me = g.c[key];
       if (me.stab < 3) GAME.homeAct(g, 'stabilise');
       if (me.army < GAME.baseArmy(key) + 4) GAME.homeAct(g, 'army');
