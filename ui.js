@@ -280,7 +280,9 @@
     }
     return out;
   }
-  const lastDepth = {}, timers = {};
+  // each zone's animation: where its front is drawn now (cur) and where it is rolling to (target)
+  const anim = {}, timers = {}, ROLL = 2000;
+  let busyUntil = 0;                                       // pop-ups wait until the fronts have finished moving
   function drawMap() {
     drawBorders();
     lands.attr('fill', f => colour(f.key)).classed('restless', f => !!(f.key && g.c[f.key] && g.c[f.key].owner && g.c[f.key].occ && g.c[f.key].occ.unrest >= 60));
@@ -291,11 +293,11 @@
     // land taken in earlier wars: a real border, drawn first so wars go on top
     const zones = (g.cuts || []).filter(k => center[k.taker] && center[k.land]).map(k => ({ id: 'k' + k.land + k.taker, taker: k.taker, land: k.land, depth: cutDepth(k), fill: colour(k.taker), cut: true }));
     for (const w of W2) {
-      if (Math.abs(w.front) < 5) continue;
       const taker = w.front >= 0 ? w.att : w.def, land = w.front >= 0 ? w.def : w.att;
       if (GAME.isHome(land)) continue;
-      const prev = w.prev === undefined ? undefined : Math.sign(w.prev) === Math.sign(w.front) ? Math.abs(w.prev) / 100 : 0;
-      zones.push({ id: 's' + w.id + (w.front >= 0 ? 'a' : 'd'), taker, land, depth: Math.abs(w.front) / 100, prev, fill: colour(taker),
+      // a war that has just begun: a thin band over the border; after that the front from a year ago
+      const prev = w.prev === undefined ? 0 : Math.sign(w.prev) === Math.sign(w.front) ? Math.abs(w.prev) / 100 : 0;
+      zones.push({ id: 's' + w.id + (w.front >= 0 ? 'a' : 'd'), taker, land, depth: Math.max(0.05, Math.abs(w.front) / 100), prev, fill: colour(taker),
         capital: w.capFell && w.capFell[w.front >= 0 ? 'def' : 'att'] });
     }
     // civil wars: the rebels advance from a friendly neighbour's border, or hold the land far from the capital
@@ -303,10 +305,24 @@
       const w = g.c[d.key].war; if (!w || !center[d.key]) continue;
       const share = (GAME.SIDE[w.rebels] * w.balance + 100) / 200; if (share < 0.04) continue;
       const friend = (NEIGHBOURS[d.key] || []).find(n => n === GAME.HOME[w.rebels] || (g.c[n] && !GAME.isHome(n) && g.c[n].independent && g.c[n].a * GAME.SIDE[w.rebels] >= 30));
-      zones.push({ id: 'c' + d.key, taker: friend || null, land: d.key, depth: share * 0.9, fill: campColour[w.rebels], civil: true });
+      zones.push({ id: 'c' + d.key, taker: friend || null, land: d.key, depth: share * 0.9, prev: 0, fill: campColour[w.rebels], civil: true });
     }
     const zg = fronts.selectAll('g.zone').data(zones, z => z.id);
-    zg.exit().each(function (z) { if (timers[z.id]) timers[z.id].stop(); delete lastDepth[z.id]; }).remove();
+    // a side that is driven out (or a war that ends) rolls back to its border before it goes
+    zg.exit().each(function (z) {
+      if (timers[z.id]) timers[z.id].stop();
+      const A = anim[z.id], el = d3.select(this), f = frontField(z.land, z.taker); delete anim[z.id];
+      const becomesBorder = (g.cuts || []).some(k => k.land === z.land && k.taker === z.taker);
+      if (!A || !f || z.cut || becomesBorder || window.NO_ANIM) return el.remove();
+      el.attr('class', 'zonegone'); el.select('.units').remove(); el.select('.thrusts').remove();
+      busyUntil = Math.max(busyUntil, performance.now() + ROLL * 0.6);
+      const tm = d3.timer(t => {
+        const u = Math.min(1, t / (ROLL * 0.6)), res = f.at(Math.max(0.001, A.cur * (1 - d3.easeCubicInOut(u))));
+        el.selectAll('.zonefill,.zonehatch,.zoneline,.zoneglow').attr('d', res.d);
+        el.select('#zclip-' + z.id + ' path').attr('d', res.d);
+        if (u >= 1) { tm.stop(); el.remove(); }
+      });
+    });
     const zen = zg.enter().append('g').attr('class', 'zone');
     zen.append('clipPath').attr('id', z => 'clip-' + z.id).append('path');
     zen.append('path').attr('class', 'zonefill')
@@ -354,29 +370,37 @@
         });
         return res;
       };
-      // roll smoothly from last year's front to this year's
-      const from = lastDepth[z.id] === undefined ? prev : lastDepth[z.id];
-      lastDepth[z.id] = depth;
-      if (timers[z.id]) timers[z.id].stop();
-      const fin = f.at(depth);
-      if (Math.abs(from - depth) < 0.005 || window.NO_ANIM) paint(depth);
-      else timers[z.id] = d3.timer(t => {
-        const u = Math.min(1, t / 1600), e = d3.easeCubicInOut(u);
-        paint(from + (depth - from) * e);
-        if (u >= 1) timers[z.id].stop();
-      });
+      // roll smoothly from where the front is drawn now to this year's line. A redraw while it rolls
+      // (a click, an event) lets the roll go on; a new target makes it turn from where it is.
+      const A = anim[z.id], fin = f.at(depth);
+      if (!(A && A.running && Math.abs(A.target - depth) < 0.001)) {
+        const from = A ? A.cur : prev;
+        if (timers[z.id]) timers[z.id].stop();
+        const st = anim[z.id] = { cur: from, target: depth, running: false };
+        if (Math.abs(from - depth) < 0.005 || window.NO_ANIM) { st.cur = depth; paint(depth); }
+        else {
+          st.running = true; busyUntil = Math.max(busyUntil, performance.now() + ROLL);
+          paint(from);
+          timers[z.id] = d3.timer(t => {
+            const u = Math.min(1, t / ROLL);
+            st.cur = from + (depth - from) * d3.easeCubicInOut(u);
+            paint(st.cur);
+            if (u >= 1) { st.running = false; timers[z.id].stop(); }
+          });
+        }
+      }
       // army counters stand in two lines along the front: the side holding the zone behind it, the other in front
       const units = z.cut ? [] : frontUnits(f, fin, depth, z, fill);
       const us = el.select('.units').selectAll('g.unit').data(units, u => u.id);
       us.exit().remove();
-      const ue = us.enter().append('g').attr('class', 'unit').attr('transform', u => `translate(${u.x},${u.y})`);
+      const ue = us.enter().append('g').attr('class', 'unit').attr('transform', u => `translate(${u.x},${u.y})`).style('opacity', window.NO_ANIM ? 1 : 0);
       const inner = ue.append('g').attr('class', 'usize');
       inner.append('rect').attr('x', -3.4).attr('y', -2.3).attr('width', 6.8).attr('height', 4.6);
       inner.append('path').attr('d', 'M-3.4,-2.3L3.4,2.3M3.4,-2.3L-3.4,2.3');
       const um = ue.merge(us);
       um.select('rect').attr('fill', u => u.col);
       um.select('.usize').attr('transform', `scale(${1 / Math.sqrt(zoomK)})`);
-      (window.NO_ANIM ? um : um.transition().duration(1600).ease(d3.easeCubicInOut)).attr('transform', u => `translate(${u.x},${u.y})`);
+      (window.NO_ANIM ? um : um.transition().duration(ROLL).ease(d3.easeCubicInOut)).attr('transform', u => `translate(${u.x},${u.y})`).style('opacity', 1);
     });
     arrows.selectAll('path').data(W2, w => w.id).join('path').attr('class', 'warline').attr('marker-end', 'url(#arrowhead)').attr('d', w => {
       const a = center[w.att], b = center[w.def], mx = (a[0] + b[0]) / 2, my = (a[1] + b[1]) / 2;
@@ -700,12 +724,15 @@
   let toastTimer = 0;
   function toast(msg) { if (!msg) return; const t = $('toast'); t.textContent = msg; t.hidden = false; clearTimeout(toastTimer); toastTimer = setTimeout(() => t.hidden = true, 2200); }
 
+  let waiting = false;
   function endYear() {
-    if (!g || g.over || !$('modal').hidden) return;
+    if (!g || g.over || waiting || !$('modal').hidden) return;
     GAME.endYear(g); refresh();
-    if (g.over) return gameOver();
-    toast(`${g.year} begins: +${g.nation ? GAME.nationIncome(g) : GAME.income(g, g.side)} IP`);
-    showEvents();
+    if (!g.over) toast(`${g.year} begins: +${g.nation ? GAME.nationIncome(g) : GAME.income(g, g.side)} IP`);
+    const wait = window.NO_ANIM || window.NO_WAIT ? 0 : Math.max(0, busyUntil - performance.now());
+    if (!wait) return g.over ? gameOver() : showEvents();
+    waiting = true; $('end').disabled = true;
+    setTimeout(() => { waiting = false; $('end').disabled = false; if (g.over) gameOver(); else showEvents(); }, wait + 150);
   }
   $('end').onclick = endYear;
   $('detente').onclick = () => { if (g && g.side && GAME.detente(g, g.side)) { toast('Summit held: tension −15'); refresh(); } };
