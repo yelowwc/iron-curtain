@@ -12,12 +12,14 @@ A small, free Cold War strategy game that runs in your browser. Lead the **Unite
 **Offline:** download or clone this repository and open `index.html` in any modern browser. No installation, no internet needed.
 
 ## How to play
-- **Choose who you lead:** the **United States**, the **Soviet Union**, or any of about 100 nations that exist in 1947.
+- **Choose who you lead:** the **United States**, the **Soviet Union**, or any of the 75 or so nations that are independent in 1947.
 - **Each year** you get Influence Points (IP). Click a country on the map and spend them, then press **End Year** (or Enter).
+- **The map:** scroll to zoom and drag to move. Click a country to select all of it, including land it has annexed; double-click to select just one region and zoom onto it. Esc clears the selection.
 - **As a superpower**, push countries past 60 toward you to bring them into your bloc. When 1991 ends, the bigger bloc wins. **Propaganda** (1 IP), **Economic Aid** (3 IP) and **Back a Coup** (5 IP) pull countries your way.
 - **As a nation**, run your country: stabilise it, develop the economy, build the army, choose your foreign policy (West, East or non-aligned), join or leave alliances, make friends, and maybe invade a neighbour. If you are overthrown or conquered, the game is over.
 - **Governments and parties:** every country has a government and five parties (Communists, Socialists, Liberals, Conservatives, Nationalists). Democracies hold elections; in dictatorships a strong opposition may rise up. Back a party with **+**, and in your own country hand power to a party with **⚑**.
-- **Armies and wars:** every country has an army. **Invade** to attack. The front moves across the map; take the enemy capital to weaken them. If the attacker wins, it installs a friendly government. Real wars happen too: the Arab–Israeli wars, India–Pakistan, Iran–Iraq, the Falklands...
+- **Armies and wars:** every country has an army. **Invade** to attack. Take the enemy capital to weaken them. If the attacker wins, it installs a friendly government. Real wars happen too: the Arab–Israeli wars, India–Pakistan, Iran–Iraq, the Falklands...
+- **War maps:** occupied land is drawn in the occupier's colour behind a solid front line. Each year the front rolls forward or back, arrows show where the offensives went, and both armies stand in facing lines along the front.
 - **Peace:** in your own war, tick the terms you want (reparations, disarm them, a friendly government, annexation) and see if the enemy would sign. Win a war and you dictate the peace at a conference.
 - **Borders change:** when a war ends in a truce, the ceasefire line becomes the new border. The loser may come back years later to win it back.
 - **Occupied lands:** every country you annex and every piece of land you take is a territory with unrest and integration. Choose a policy (garrison, integrate, exploit, autonomy), invest, crack down, or release it. Too much unrest and it rises up; full integration makes it yours for good.
@@ -25,14 +27,15 @@ A small, free Cold War strategy game that runs in your browser. Lead the **Unite
 - **Alliances:** NATO, the Warsaw Pact, SEATO and the Rio Pact defend their members when they are attacked.
 - **Civil wars** (⚔): arm a side or send troops. The rebels' territory is shown on the map.
 - **Tension** rises with coups, invasions and crises. At 100 it is nuclear war and everyone loses. **Détente** (3 IP) lowers it.
-- Real history happens along the way (the Berlin Blockade, the Cuban Missile Crisis, Vietnam, the fall of the Wall...) and as a superpower you sometimes decide what to do.
+- Real history happens along the way: 48 historical events (the Berlin Blockade, the Cuban Missile Crisis, Vietnam, the fall of the Wall...). As a superpower you sometimes decide what to do.
+- **Saving:** the game saves itself in your browser after every move, so you can close the tab and carry on later.
 
 ## Files
 - `game.js`: the rules (also runs in Node: `node tools/balance.js` plays computer against computer, `node tools/nation.js` plays some nations)
 - `data.js`: countries, capitals, alliances and historical events
 - `neighbours.js`: which countries border each other (made by `node tools/build-neighbours.js`)
 - `ui.js`, `style.css`, `index.html`: the screen
-- `tools/test.html`: opens a game and plays it automatically, e.g. `tools/test.html#US,10` (10 years as the USA)
+- `tools/test.html`: opens a game and plays it automatically, e.g. `tools/test.html#US,10` (10 years as the USA) or `tools/test.html#US,20,EGY,still,v=45:26:2.6` (20 years, select Egypt, no animation, view centred on 45°E 26°N at zoom 2.6)
 - `lib/`: d3, topojson-client and the world map (see Credits)
 
 ## Credits
