@@ -663,8 +663,29 @@
     for (const id in GAME.PROGRAMS) { const R = GAME.PROGRAMS[id]; h += btn(`data-prog="${id}"`, R.name, R.cost, GAME.programCheck(g, g.side, id), R.help); }
     return h;
   }
+  // the cabinet: hand part of the year's IP to your ministers
+  function cabinetHtml() {
+    const a = g.auto || { on: false, share: 0.5, focus: 'balanced' };
+    return `<h3>Cabinet</h3><div class="sub">Let your ministers spend part of your IP each year when you press End Year.</div>
+      <div class="policies"><button class="pol ${a.on ? 'on' : ''}" data-cab="on|${a.on ? 0 : 1}">${a.on ? 'On' : 'Off'}</button>
+      ${[0.25, 0.5, 0.75, 1].map(s => `<button class="pol ${a.share === s ? 'on' : ''}" data-cab="share|${s}">${s * 100}%</button>`).join('')}</div>
+      <div class="policies">${Object.keys(GAME.FOCUS).map(f => `<button class="pol ${a.focus === f ? 'on' : ''}" data-cab="focus|${f}">${GAME.FOCUS[f]}</button>`).join('')}</div>
+      ${a.on && a.report ? `<div class="sub">${esc(a.report)}</div>` : ''}`;
+  }
+  // a nation still inside a union
+  function unionPanel() {
+    const key = g.nation, d = GAME.info(key), c = g.c[key], owner = GAME.info(GAME.stateOf(g, c.owner)).name, sup = Math.round(g.support || 0);
+    let h = `<h2>${esc(d.name)} <span class="you">your nation</span></h2><div class="sub">Part of ${esc(owner)} since ${c.since}. ${d.core ? 'Most people here want to stay.' : ''}</div>
+      <div class="facts"><div class="fact"><small>Support for independence</small><b style="color:${sup >= 40 ? '#6fbf73' : '#f0a03c'}">${sup}</b> <span class="sub">${sup >= 40 ? 'enough to rise' : 'needs 40 to rise'}</span></div>
+      <div class="fact"><small>Militia</small>${g.militia || 0}/12</div><div class="fact"><small>Income</small>+${GAME.nationIncome(g)} IP/yr</div></div>
+      <div class="sub">The movement grows by itself when ${esc(owner)} is weak. If you rise and lose, it is over.</div>`;
+    if (c.war) h += civilBox(c);
+    h += `<h3>The cause</h3>` + Object.keys(GAME.UNION_ACTIONS).map(k => { const A = GAME.UNION_ACTIONS[k]; return btn(`data-union="${k}"`, A.name, A.cost, GAME.unionCheck(g, k), A.help); }).join('');
+    return h + cabinetHtml();
+  }
   // the player's own nation
   function homePanel() {
+    if (GAME.captive(g)) return unionPanel();
     const key = g.nation, d = GAME.info(key), c = g.c[key];
     let h = `<h2>${esc(d.name)} <span class="you">your nation</span></h2><div class="sub">${esc(D.REGIONS[d.region])} · worth ${'★'.repeat(GAME.valueOf(g, key))}</div>
       <div class="align"><b style="left:20%"></b><b style="left:80%"></b><i style="left:${(c.a + 100) / 2}%"></i></div>
@@ -698,6 +719,7 @@
     if (terrs.length) h += `<h3>Occupied lands</h3>` + terrs.map(terrCard).join('');
     if (lost.length) h += `<div class="sub" style="color:#f0a03c">Land you lost: to ${lost.map(k => esc(GAME.info(k.taker).name)).join(', ')}. Win a war against them to get it back.</div>`;
 
+    h += cabinetHtml();
     h += `<div class="sub" style="margin-top:8px">Your score grows with your army, stability, friends (countries that think like you) and defeated enemies. Click another country to act on it.</div>`;
     return h;
   }
@@ -708,7 +730,7 @@
     if (g.nation && (!sel || sel === g.nation)) { el.innerHTML = homePanel(); bind(el); return; }   // your own country: the management menu
     if (!sel || sel === GAME.HOME[g.side]) {
       el.innerHTML = `<h2>${esc(GAME.NAME[g.side])}</h2><div class="sub">You lead the ${g.side === 'US' ? 'West' : 'East'}. Goal: have the higher score in ${GAME.END}.</div>
-        ${alliancesLine(GAME.HOME[g.side])}${homeFront()}${(sw => sw ? warBox(sw) : "")(GAME.warOf(g, GAME.HOME[g.side]))}
+        ${alliancesLine(GAME.HOME[g.side])}${homeFront()}${cabinetHtml()}${(sw => sw ? warBox(sw) : "")(GAME.warOf(g, GAME.HOME[g.side]))}
         <h3>What to do</h3><ul class="empty">
         <li><b>Click a country</b> on the map to see it and act on it.</li>
         <li>Push countries past <b>${GAME.BLOC}</b> toward you to bring them into your bloc. Each adds its value to your score.</li>
@@ -775,6 +797,8 @@
     const pr = el.querySelector('#propose'); if (pr) pr.onclick = () => { toast(GAME.proposePeace(g, talkPicks)); talkPicks = []; after(); };
     el.querySelectorAll('[data-terr]').forEach(b => b.onclick = () => { const [id, kind] = b.dataset.terr.split('|'); toast(GAME.territoryAct(g, id, kind)); after(); });
     el.querySelectorAll('[data-form]').forEach(b => b.onclick = () => { toast(GAME.form(g, b.dataset.form)); after(); });
+    el.querySelectorAll('[data-union]').forEach(b => b.onclick = () => { toast(GAME.unionAct(g, b.dataset.union)); after(); });
+    el.querySelectorAll('[data-cab]').forEach(b => b.onclick = () => { const [k, v] = b.dataset.cab.split('|'); GAME.setCabinet(g, { [k]: k === 'on' ? v === '1' : k === 'share' ? +v : v }); after(); });
     el.querySelectorAll('[data-prog]').forEach(b => b.onclick = () => { toast(GAME.programAct(g, g.side, b.dataset.prog)); after(); });
   }
   function after() { refresh(); if (g.over) gameOver(); }
@@ -860,6 +884,7 @@
     let saved = null;
     try { saved = JSON.parse(localStorage.getItem(SAVE) || 'null'); } catch (e) { }
     const nations = D.COUNTRIES.filter(d => !GAME.isHome(d.key) && !d.indep && !d.union);
+    const captives = D.COUNTRIES.filter(d => d.union && !d.indep);
     const regions = ['EU', 'ME', 'AS', 'AF', 'LA'];
     const lean = a => a >= 25 ? 'var(--us)' : a <= -25 ? 'var(--su)' : 'var(--neutral)';
     modal(`<div class="kicker">1947 – 1991</div><h1>Iron Curtain Lite</h1>
@@ -871,6 +896,8 @@
       <h3 style="margin-top:16px">…or lead a nation</h3>
       <div class="nations">${regions.map(r => `<div><h4>${D.REGIONS[r]}</h4>${nations.filter(d => d.region === r).map(d =>
         `<button class="nat" data-side="${d.key}" style="--c:${lean(d.a)}">${esc(d.name)}</button>`).join('')}</div>`).join('')}</div>
+      <h3 style="margin-top:16px">…or a nation inside a union</h3><div class="sub">No army and no foreign policy yet: build a movement, arm a militia, and choose the moment to declare independence.</div>
+      <div class="nations"><div>${captives.map(d => `<button class="nat" data-side="${d.key}" style="--c:var(--neutral)" title="Part of ${esc(GAME.info(d.union).name)}">${esc(d.name)}</button>`).join('')}</div></div>
       ${saved && !saved.over ? `<button class="go" id="resume">CONTINUE (${esc(saved.nation ? GAME.info(saved.nation).name : saved.side === 'US' ? 'USA' : 'USSR')}, ${saved.year})</button>` : ''}
       <h3 style="margin-top:20px">How to play</h3>${howTo()}`);
     document.querySelectorAll('[data-side]').forEach(b => b.onclick = () => { g = GAME.newGame(b.dataset.side); sel = null; close(); refresh(); showEvents(); });

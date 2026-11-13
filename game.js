@@ -205,6 +205,7 @@
     say(g, 'The Second World War is over. The world splits into two camps.');
     runEvents(g);
     if (nation) g.start = nationScore(g);
+    if (nation && g.c[nation].owner) { g.support = 20; g.militia = 0; g.fromUnion = true; }
     return g;
   }
   function say(g, text) { g.news.unshift({ year: g.year, text }); g.news.length = Math.min(g.news.length, 80); }
@@ -255,6 +256,7 @@
   }
   function nationIncome(g) {
     const occ = territories(g).reduce((t, x) => t + (x.occ.policy === 'exploit' ? x.worth * 1.5 : x.occ.policy === 'integrate' && !x.occ.core ? -1 : 0), 0);
+    if (captive(g)) return Math.round(3 + (g.support || 0) / 12);
     return Math.round(3 + valueOf(g, g.nation) * 1.5 + (pactsOf(g, g.nation).length ? 2 : 0) + puppetsOf(g).length - (g.c[g.nation].war ? 2 : 0) + occ);
   }
   function grade(gain) {
@@ -696,7 +698,7 @@
       if (c.war) continue;
       if (c.stab < 4 && Math.random() < 0.12) c.stab++;
       // restless regions may rise: rarely in a democracy, never the core of a country, never what the player manages itself
-      const mine = c.owner === g.nation && !isUnionPart(g, d.key);
+      const mine = (c.owner === g.nation && !isUnionPart(g, d.key)) || d.key === g.nation;     // the player decides when to rise
       if (!d.core && !mine && !c.unified && c.stab <= 2 && Math.random() < 0.03 * (VOTING(g.c[c.owner].gov) ? 0.15 : 1)) rise(g, d.key);
     }
     territoryYear(g);
@@ -1042,6 +1044,85 @@
     }
   }
 
+  // ================= playing a nation inside a union =================
+  // Ukraine inside the USSR, Scotland inside Britain, Slovakia inside Czechoslovakia...: no army or foreign
+  // policy of your own yet. Build support for independence, arm a militia, and choose the moment to rise.
+  const UNION_ACTIONS = {
+    movement: { name: 'National Movement', cost: 3, help: 'Poets, priests and underground papers: support for independence +12. The centre notices.' },
+    militia: { name: 'Secret Militia', cost: 2, help: 'Hidden weapons and trained men: militia +2 (up to 12). It fights when you rise.' },
+    declare: { name: 'Declare Independence', cost: 4, help: 'Rise against the union. Your militia and the people fight; if the uprising is crushed, it is over for you.' },
+    fight: { name: 'Lead the Fight', cost: 2, help: 'Throw everything into the uprising: a push for the rebels this year (twice a year).' },
+  };
+  const captive = g => !!(g.nation && g.c[g.nation].owner);
+  function unionCheck(g, kind) {
+    const A = UNION_ACTIONS[kind], c = g.c[g.nation], r = { ok: false, cost: A.cost, why: '' };
+    if (g.over) return (r.why = 'The game is over', r);
+    if (!captive(g)) return (r.why = 'You are free', r);
+    if (g.ip.ME < A.cost) return (r.why = 'Not enough IP', r);
+    if (kind === 'fight') { if (!c.war) return (r.why = 'Not during peace', r); if ((g.homeMoves.fight || 0) >= 2) return (r.why = 'Twice a year', r); r.ok = true; return r; }
+    if (c.war) return (r.why = 'The uprising has begun', r);
+    if (g.homeMoves[kind]) return (r.why = 'Once a year', r);
+    if (kind === 'militia' && (g.militia || 0) >= 12) return (r.why = 'As big as it can get in secret', r);
+    if (kind === 'declare' && (g.support || 0) < 40) return (r.why = 'Support must reach 40 first', r);
+    r.ok = true; return r;
+  }
+  function unionAct(g, kind) {
+    const r = unionCheck(g, kind); if (!r.ok) return r.why;
+    const c = g.c[g.nation], owner = stateOf(g, c.owner);
+    g.ip.ME -= r.cost; g.homeMoves[kind] = (g.homeMoves[kind] || 0) + 1;
+    if (kind === 'movement') { g.support = Math.min(100, (g.support || 0) + 12); return `Support for independence grows to ${Math.round(g.support)}.`; }
+    if (kind === 'militia') { g.militia = Math.min(12, (g.militia || 0) + 2); return `The militia grows to ${g.militia}.`; }
+    if (kind === 'fight') { c.war.help[c.war.rebels] += 12; return 'Your people push forward.'; }
+    const ownerSide = ownerAlign(g, owner) >= 0 ? 'US' : 'SU', rebels = OTHER[ownerSide];
+    c.war = { rebels, ideo: null, balance: SIDE[rebels] * ((g.support || 0) - 40 + (g.militia || 0) * 2) * 0.6, years: 0, help: { US: 0, SU: 0 }, troops: {}, sep: true };
+    addTension(g, 4);
+    say(g, `${info(g.nation).name} declares independence from ${info(owner).name}! The people take to the streets.`);
+    return 'You declare independence. Now hold out.';
+  }
+  // the movement grows by itself a little where the centre is weak, and the centre pushes back
+  function unionYear(g) {
+    if (!captive(g)) return;
+    const c = g.c[g.nation], owner = stateOf(g, c.owner);
+    const weak = isHome(owner) ? (g.pw[owner === 'USA' ? 'US' : 'SU'].home < 40) : g.c[owner].stab <= 2;
+    g.support = clamp((g.support || 0) + (weak ? 3 : 0) - (VOTING(isHome(owner) ? (owner === 'USA' ? 'Democracy' : 'Socialist') : g.c[owner].gov) ? 0 : 2) + rand(-1, 2), 0, 100);
+  }
+
+  // ================= the cabinet: your ministers spend part of your IP for you =================
+  // g.auto = { on, share (0.25..1), focus: balanced | home | influence | defence, report }
+  const FOCUS = { balanced: 'Balanced', home: 'Home first', influence: 'Influence abroad', defence: 'Defence' };
+  function setCabinet(g, o) { g.auto = Object.assign(g.auto || { on: false, share: 0.5, focus: 'balanced', report: '' }, o); }
+  function runCabinet(g) {
+    const a = g.auto; if (!a || !a.on || g.over) return;
+    const me = g.nation ? 'ME' : g.side, before = g.ip[me], keep = before * (1 - a.share), done = [];
+    const spend = (fn, label) => { const ip0 = g.ip[me]; const r = fn(); if (g.ip[me] < ip0) done.push(label); return r; };
+    if (!g.nation) {
+      const side = g.side, P = g.pw[side];
+      if ((a.focus === 'home' || P.home < 40) && programCheck(g, side, 'homefront').ok) spend(() => programAct(g, side, 'homefront'), 'Home Front');
+      if (a.focus === 'home' && programCheck(g, side, 'space').ok) spend(() => programAct(g, side, 'space'), 'Space Programme');
+      if (a.focus === 'defence' && programCheck(g, side, 'army').ok) spend(() => programAct(g, side, 'army'), 'Expand the Army');
+      if (a.focus !== 'home' || g.ip[side] > keep + 6) {
+        const held = Math.min(g.ip[side], keep); g.ip[side] -= held;               // the ministers only see their share
+        const ip0 = g.ip[side]; computerTurn(g, side); if (g.ip[side] < ip0) done.push(`${Math.round(ip0 - g.ip[side])} IP of moves abroad`);
+        g.ip[side] += held;
+      }
+    } else if (captive(g)) {
+      for (const k of ['movement', 'militia', 'fight', 'fight']) if (unionCheck(g, k).ok && k !== 'declare' && g.ip.ME - UNION_ACTIONS[k].cost >= keep) spend(() => unionAct(g, k), UNION_ACTIONS[k].name);
+    } else {
+      const c = g.c[g.nation], try1 = k => homeCheck(g, k).ok && g.ip.ME - HOME_ACTIONS[k].cost >= keep ? spend(() => homeAct(g, k), HOME_ACTIONS[k].name) : null;
+      if (c.war) { try1('crush'); try1('crush'); }
+      if (c.stab <= 2 || a.focus === 'home') try1('stabilise');
+      const threat = (NB[g.nation] || []).some(b => g.c[b] && free(g, b) && g.c[b].army > c.army);
+      if (threat || a.focus === 'defence') try1('army');
+      if (a.focus !== 'defence') try1('develop');
+      if (a.focus === 'influence' || a.focus === 'balanced') {
+        const targets = D.COUNTRIES.filter(d => d.key !== g.nation && !isHome(d.key) && free(g, d.key) && Math.abs(g.c[d.key].a - c.a) > 5 && Math.abs(g.c[d.key].a - c.a) < 40).sort((x, y) => y.val - x.val);
+        for (const d of targets.slice(0, 4)) if (check(g, 'ME', 'aid', d.key).ok && g.ip.ME - ACTIONS.aid.cost >= keep) spend(() => act(g, 'ME', 'aid', d.key), `Aid for ${d.name}`);
+      }
+      try1('stabilise');
+    }
+    a.report = done.length ? `Your cabinet: ${done.join(', ')}.` : 'Your cabinet saw nothing worth the money.';
+  }
+
   // ================= events =================
   function runEvents(g) {
     allianceYear(g);
@@ -1071,16 +1152,20 @@
   const armyPower = (g, key) => g.c[key].army * (isHome(key) ? 1 : 0.8 + g.c[key].stab * 0.08);
   function endYear(g) {
     if (g.over || g.pending.length || g.peace) return;
+    runCabinet(g);
     for (const side of ['US', 'SU']) if (side !== g.side) computerTurn(g, side);
     // ---- civil wars ----
     for (const d of D.COUNTRIES) {
       const c = g.c[d.key], w = c.war; if (!w) continue;
       w.years++;
-      const rebelsPush = SIDE[w.rebels] * (4 - c.stab) * 2;                // shaky governments lose ground
+      const rebelsPush = SIDE[w.rebels] * ((4 - c.stab) * 2 + (d.key === g.nation && c.owner ? (g.militia || 0) * 0.8 + (g.support || 0) / 10 : 0));   // shaky governments lose ground; in the player's own rising the militia and popular support fight too
       const troops = (w.troops.US ? 25 : 0) - (w.troops.SU ? 25 : 0);
       const govArmy = c.owner ? (isHome(stateOf(g, c.owner)) ? 12 : g.c[stateOf(g, c.owner)].army * 0.4) : c.army;   // a region is held by its owner's army
       const army = SIDE[w.rebels] * -govArmy * 0.6;                           // the government's own army fights the rebels
-      w.balance = clamp(w.balance + (w.help.US - w.help.SU) + troops + rebelsPush + army * 0.3 + rand(-12, 12), -100, 100);
+      // against the player's own rising the centre throws in its whole army, as hard as its grip allows
+      const ownerKey = c.owner ? stateOf(g, c.owner) : null;
+      const crackdown = d.key === g.nation && ownerKey ? -SIDE[w.rebels] * g.c[ownerKey].army * 0.8 * (isHome(ownerKey) ? g.pw[ownerKey === 'USA' ? 'US' : 'SU'].home / 70 : g.c[ownerKey].stab / 3) : 0;
+      w.balance = clamp(w.balance + (w.help.US - w.help.SU) + troops + rebelsPush + army * 0.3 + crackdown + rand(-12, 12), -100, 100);
       w.help = { US: 0, SU: 0 };
       const won = w.sep ? 70 : 100;                                         // a region needs less to break free than rebels need to take a capital
       if (Math.abs(w.balance) >= won || w.years >= 10) {
@@ -1088,8 +1173,13 @@
         for (const p of ['US', 'SU']) if (w.troops[p]) g.bonus[p] += winner === p ? 3 : -5;   // a lost war abroad is a humiliation
         if (c.owner) {                                                        // a region's war of independence
           const ow = c.owner;
-          if (winner && winner === w.rebels) { c.war = null; freeUnion(g, d.key, SIDE[winner] * 40); say(g, `${d.name} wins its war of independence against ${info(ow).name}!`); }
-          else { c.war = null; c.stab = 2; say(g, `${info(ow).name} crushes the uprising in ${d.name}.`); }
+          if (winner && winner === w.rebels) {
+            c.war = null; freeUnion(g, d.key, SIDE[winner] * 40); say(g, `${d.name} wins its war of independence against ${info(ow).name}!`);
+            if (d.key === g.nation) { g.bonus.ME += 8; g.c[d.key].army = Math.max(g.c[d.key].army, 3 + (g.militia || 0)); say(g, 'Your nation is free!'); }
+          } else {
+            c.war = null; c.stab = 2; say(g, `${info(ow).name} crushes the uprising in ${d.name}.`);
+            if (d.key === g.nation) { if (winner) overthrow(g, `${info(ow).name}'s troops crush your uprising. Its leaders are shot or sent away.`); else g.support = Math.max(0, (g.support || 0) - 20); }
+          }
           continue;
         }
         const R = REBELS[w.ideo] || REBELS[w.rebels === 'SU' ? 'com' : 'nat'];
@@ -1145,6 +1235,7 @@
     }
     powerYear(g);
     if (g.over) return;
+    unionYear(g);
     partyYear(g);
     govYear(g);
     ownedYear(g);
@@ -1258,7 +1349,7 @@
   function capitalName(key) { const c = D.CAPITALS.find(x => x.key === key); return c ? c.name : 'the capital'; }
   // how the game stands: a nation by how much it grew, a superpower by the blocs
   function judge(g) {
-    if (g.nation) { const gain = nationScore(g) - g.start; return { winner: null, why: 'time', grade: grade(gain), gain, year: g.year }; }
+    if (g.nation) { const gain = nationScore(g) - g.start; return { winner: null, why: 'time', grade: captive(g) ? 'Captive Nation' : grade(gain + (g.fromUnion ? 10 : 0)), gain, year: g.year }; }
     const us = score(g, 'US'), su = score(g, 'SU');
     return { winner: Math.abs(us - su) < 3 ? null : us > su ? 'US' : 'SU', why: 'time', us, su, year: g.year };
   }
@@ -1266,7 +1357,7 @@
   function finish(g) { if (!g.over) g.over = judge(g); }
 
   G.GAME = { ARM_COST, TROOPS_COST, UPKEEP, CAPITAL_AT, START, END, BLOC, NAME, HOME, SIDE, ACTIONS, HOME_ACTIONS, DETENTE_COST,
-    PROGRAMS, SPACE, programCheck, programAct, REBELS,
+    PROGRAMS, SPACE, programCheck, programAct, REBELS, FOCUS, setCabinet, UNION_ACTIONS, unionCheck, unionAct, captive: g => captive(g),
     newGame, check, act, homeCheck, homeAct, warOf, warCheck, warHelp, makePeace, deployed, detente, endYear, choose,
     score, income, nationScore, nationIncome, friendsOf, puppetsOf, pactsOf, allied, blocOf, leaning, isHome, info, neighbours,
     borders, landsOf, capitalName, computerTurn, baseArmy, valueOf, PARTIES, PARTY, partyCheck, partyAct,
