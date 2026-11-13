@@ -230,7 +230,7 @@
     return n;
   }
   function income(g, side) {
-    let n = (side === 'SU' ? 17.5 : 8.5) + (g.pw ? g.pw[side].econ / (side === 'SU' ? 30 : 50) : 1.8);   // the Soviet planned economy starts with fewer friends but more to spend; both grow with the economy
+    let n = (side === 'SU' ? 17.3 : 8.6) + (g.pw ? g.pw[side].econ / (side === 'SU' ? 30 : 50) : 1.8);   // the Soviet planned economy starts with fewer friends but more to spend; both grow with the economy
     for (const d of D.COUNTRIES) if (blocOf(g, d.key) === side) n += d.val * 0.25;
     return Math.round(n);
   }
@@ -311,7 +311,7 @@
       } else if (!VOTING(c.gov) && !c.war && c.stab <= 2 && d.key !== g.nation) {
         // in a dictatorship, a strong party shut out of power may take up arms
         const opp = PARTIES.map(p => p.id).filter(i => i !== c.ruling && P[i] > 40)[0];
-        if (opp && Math.random() < 0.08) civilWar(g, d.key, opp === 'com' || opp === 'soc' ? 'SU' : 'US', 0);
+        if (opp && Math.random() < 0.08) civilWar(g, d.key, opp === 'com' || opp === 'soc' ? 'SU' : 'US', 0, opp);
       }
     }
   }
@@ -379,10 +379,27 @@
     g.tension = clamp(g.tension + n, 0, 100);
     if (g.tension >= 100 && !g.over) { g.over = { winner: null, why: 'nuclear' }; say(g, 'NUCLEAR WAR. Nobody wins.'); }
   }
-  function civilWar(g, key, rebels, balance) {
+  // Rebels fight for a cause: what they build if they win, and which camp backs them.
+  const REBELS = {
+    com: { name: 'Communists', camp: 'SU', gov: 'Socialist', a: -70, color: '#c62828' },
+    soc: { name: 'Socialist revolutionaries', camp: 'SU', gov: 'Revolutionary', a: -60, color: '#e57373' },
+    lib: { name: 'Democrats', camp: 'US', gov: 'Democracy', a: 65, color: '#4f8fe6' },
+    con: { name: 'Royalists and conservatives', camp: 'US', gov: 'Monarchy', a: 70, color: '#1f4e8c' },
+    nat: { name: 'Nationalist officers', camp: 'US', gov: 'Junta', a: 70, color: '#8d6e4a' },
+  };
+  // the cause: the biggest party of the rebels' camp that is not in power (Soviet-backed rebels are communists unless the socialists are much bigger)
+  function rebelCause(c, rebels) {
+    const P = c.parties || {}, ids = rebels === 'SU' ? ['com', 'soc'] : ['lib', 'con', 'nat'];
+    const pick = ids.filter(i => i !== c.ruling).sort((x, y) => (P[y] || 0) - (P[x] || 0))[0];
+    if (rebels === 'SU') return pick === 'soc' && (P.soc || 0) > (P.com || 0) * 2 ? 'soc' : 'com';
+    if (pick === 'con' && c.gov !== 'Monarchy' && !['Socialist', 'Revolutionary'].includes(c.gov)) return (P.lib || 0) > (P.nat || 0) ? 'lib' : 'nat';
+    return pick || 'nat';
+  }
+  function civilWar(g, key, rebels, balance, ideo) {
     const c = g.c[key]; if (!c || !c.independent || c.war || isHome(key) || c.owner) return;
-    c.war = { rebels, balance: balance || 0, years: 0, help: { US: 0, SU: 0 }, troops: {} };
-    say(g, `Civil war in ${info(key).name}: ${rebels === 'SU' ? 'communist' : 'anti-communist'} rebels take up arms.`);
+    ideo = ideo && REBELS[ideo] && REBELS[ideo].camp === rebels ? ideo : rebelCause(c, rebels);
+    c.war = { rebels, ideo, balance: balance || 0, years: 0, help: { US: 0, SU: 0 }, troops: {} };
+    say(g, `Civil war in ${info(key).name}: ${REBELS[ideo].name.toLowerCase()} take up arms (backed by the ${rebels === 'SU' ? 'East' : 'West'}).`);
   }
   // a region rises against the country that holds it. The rebels find a patron in the other camp.
   function rise(g, key) {
@@ -1075,10 +1092,14 @@
           else { c.war = null; c.stab = 2; say(g, `${info(ow).name} crushes the uprising in ${d.name}.`); }
           continue;
         }
-        c.a = winner ? SIDE[winner] * 70 : Math.round(w.balance * 0.4);
+        const R = REBELS[w.ideo] || REBELS[w.rebels === 'SU' ? 'com' : 'nat'];
+        c.a = winner ? (winner === w.rebels ? R.a : SIDE[winner] * 70) : Math.round(w.balance * 0.4);
         c.war = null; c.stab = 2;
-        if (winner && winner === w.rebels) { takePower(g, d.key, winner === 'SU' ? 'com' : 'nat'); boostParty(g, d.key, c.ruling, 20); }
-        say(g, winner ? `${d.name}: the ${winner === 'US' ? 'pro-Western' : 'pro-Soviet'} side wins the civil war.` : `${d.name}: the civil war ends in a truce.`);
+        if (winner && winner === w.rebels) {                                  // the rebels build the state they fought for
+          takePower(g, d.key, w.ideo === 'con' ? 'con' : w.ideo || (winner === 'SU' ? 'com' : 'nat')); boostParty(g, d.key, c.ruling, 20);
+          c.gov = R.gov;
+        }
+        say(g, winner === w.rebels ? `${d.name}: the ${R.name.toLowerCase()} win the civil war. The new state: ${R.gov === 'Revolutionary' ? 'a revolutionary republic' : R.gov === 'Socialist' ? 'a socialist one-party state' : R.gov.toLowerCase()}.` : winner ? `${d.name}: the government defeats the ${R.name.toLowerCase()}.` : `${d.name}: the civil war ends in a truce.`);
         if (d.key === g.nation && winner === w.rebels) overthrow(g, 'The rebels march into your capital. Your government has fallen.');
       }
     }
@@ -1245,7 +1266,7 @@
   function finish(g) { if (!g.over) g.over = judge(g); }
 
   G.GAME = { ARM_COST, TROOPS_COST, UPKEEP, CAPITAL_AT, START, END, BLOC, NAME, HOME, SIDE, ACTIONS, HOME_ACTIONS, DETENTE_COST,
-    PROGRAMS, SPACE, programCheck, programAct,
+    PROGRAMS, SPACE, programCheck, programAct, REBELS,
     newGame, check, act, homeCheck, homeAct, warOf, warCheck, warHelp, makePeace, deployed, detente, endYear, choose,
     score, income, nationScore, nationIncome, friendsOf, puppetsOf, pactsOf, allied, blocOf, leaning, isHome, info, neighbours,
     borders, landsOf, capitalName, computerTurn, baseArmy, valueOf, PARTIES, PARTY, partyCheck, partyAct,

@@ -399,7 +399,7 @@
       const w = g.c[d.key].war; if (!w || !center[d.key]) continue;
       const share = (GAME.SIDE[w.rebels] * w.balance + 100) / 200; if (share < 0.04) continue;
       const friend = (NEIGHBOURS[d.key] || []).find(n => n === GAME.HOME[w.rebels] || (g.c[n] && !GAME.isHome(n) && g.c[n].independent && g.c[n].a * GAME.SIDE[w.rebels] >= 30));
-      zones.push({ id: 'c' + d.key, taker: friend || null, land: d.key, state: d.key, depth: share * 0.9, prev: 0, fill: campColour[w.rebels], civil: true });
+      zones.push({ id: 'c' + d.key, taker: friend || null, land: d.key, state: d.key, depth: share * 0.9, prev: 0, fill: (GAME.REBELS[w.ideo] || {}).color || campColour[w.rebels], civil: true });
     }
     const zg = fronts.selectAll('g.zone').data(zones, z => z.id);
     // a side that is driven out (or a war that ends) rolls back to its border before it goes
@@ -626,7 +626,7 @@
   }
   function civilBox(c) {
     const w = c.war, west = (w.balance + 100) / 2;
-    return `<div class="warbox"><b>⚔ ${w.sep ? 'Uprising' : 'Civil war'}</b> <span class="sub">year ${w.years + 1} · ${w.sep ? `fighting for independence, backed by the ${w.rebels === 'SU' ? 'East' : 'West'}` : w.rebels === 'SU' ? 'communist rebels' : 'anti-communist rebels'}</span>
+    return `<div class="warbox"><b>⚔ ${w.sep ? 'Uprising' : 'Civil war'}</b> <span class="sub">year ${w.years + 1} · ${w.sep ? `fighting for independence, backed by the ${w.rebels === 'SU' ? 'East' : 'West'}` : (GAME.REBELS[w.ideo] ? GAME.REBELS[w.ideo].name.toLowerCase() + ', backed by the ' + (w.rebels === 'SU' ? 'East' : 'West') : w.rebels === 'SU' ? 'communist rebels' : 'anti-communist rebels')}</span>
       <div class="warbar"><i style="width:${100 - west}%;background:var(--su)"></i><i style="flex:1;background:var(--us)"></i></div>
       <div class="ends"><span>pro-Soviet</span><span>${w.balance > 0 ? 'West winning' : w.balance < 0 ? 'East winning' : 'even'}</span><span>pro-Western</span></div>
       ${['US', 'SU'].filter(p => w.troops[p]).map(p => `<div class="sub">${p === 'US' ? 'American' : 'Soviet'} troops are fighting here.</div>`).join('')}</div>`;
