@@ -533,7 +533,8 @@
       return;
     }
     const me = g.side, upkeep = GAME.deployed(g, me) * GAME.UPKEEP;
-    $('ip').innerHTML = `Influence <b>${Math.floor(g.ip[me])}</b> IP <span class="sub">+${GAME.income(g, me) - upkeep}/yr${upkeep ? ' (troops −' + upkeep + ')' : ''}</span>`;
+    const hm = g.pw[me].home, hc = hm < 30 ? '#e0533c' : hm < 50 ? '#f0a03c' : '#6fbf73';
+    $('ip').innerHTML = `Influence <b>${Math.floor(g.ip[me])}</b> IP <span class="sub">+${GAME.income(g, me) - upkeep}/yr${upkeep ? ' (troops −' + upkeep + ')' : ''}</span> · home <b style="color:${hc}">${Math.round(hm)}</b>`;
     const us = GAME.score(g, 'US'), su = GAME.score(g, 'SU'), w = Math.max(5, Math.min(95, us / Math.max(1, us + su) * 100));
     $('score').innerHTML = `<span style="color:#7fb0f0">USA <b>${us}</b></span><span class="vs"><i style="width:${w}%;background:var(--us)"></i><i style="flex:1;background:var(--su)"></i></span><span style="color:#f08a80"><b>${su}</b> USSR</span>`;
     $('detente').disabled = !!g.over || g.detenteUsed || g.ip[me] < GAME.DETENTE_COST;
@@ -613,6 +614,20 @@
     const ps = GAME.pactsOf(g, key);
     return ps.length ? `<div class="pacts">${ps.map(p => `<span style="border-color:${p.color}">${esc(p.name)}</span>`).join('')}</div>` : '';
   }
+  // a superpower at home: morale, economy, the arms and space races, and programmes to spend on
+  function homeFront() {
+    const P = g.pw[g.side], O = g.pw[g.side === 'US' ? 'SU' : 'US'], hc = P.home < 30 ? '#e0533c' : P.home < 50 ? '#f0a03c' : '#6fbf73';
+    const next = GAME.SPACE[P.space];
+    let h = `<h3>At home</h3><div class="facts">
+      <div class="fact"><small>Home morale</small><b style="color:${hc}">${Math.round(P.home)}</b> <span class="sub">${P.home < 30 ? 'dangerously low' : ''}</span></div>
+      <div class="fact"><small>Economy</small>${P.growth >= 0 ? '+' : ''}${P.growth.toFixed(1)}% a year</div>
+      <div class="fact"><small>Nuclear arsenal</small>${P.arms}/10 <span class="sub">rival ${O.arms}</span></div>
+      <div class="fact"><small>Space race</small>${P.space}/${GAME.SPACE.length} <span class="sub">${next ? 'next: ' + next.n.toLowerCase() : 'done'}</span></div>
+      <div class="fact"><small>Army</small>${Math.round(g.c[GAME.HOME[g.side]].army)}</div></div>
+      <div class="sub">Morale falls with a weak economy, wars abroad and high tension. At 0 your side collapses and loses.</div>`;
+    for (const id in GAME.PROGRAMS) { const R = GAME.PROGRAMS[id]; h += btn(`data-prog="${id}"`, R.name, R.cost, GAME.programCheck(g, g.side, id), R.help); }
+    return h;
+  }
   // the player's own nation
   function homePanel() {
     const key = g.nation, d = GAME.info(key), c = g.c[key];
@@ -656,16 +671,16 @@
     const terr = g.nation && sel && g.c[sel] && g.c[sel].owner === g.nation && GAME.territories(g).find(x => x.id === sel);
     if (terr) { const t = terr; el.innerHTML = `<h2>${esc(GAME.info(sel).name)} <span class="you">your territory</span></h2>` + terrCard(t) + '<h3 style="margin-top:18px">Your nation</h3>' + homePanel(); bind(el); return; }
     if (g.nation && (!sel || sel === g.nation)) { el.innerHTML = homePanel(); bind(el); return; }   // your own country: the management menu
-    if (!sel) {
+    if (!sel || sel === GAME.HOME[g.side]) {
       el.innerHTML = `<h2>${esc(GAME.NAME[g.side])}</h2><div class="sub">You lead the ${g.side === 'US' ? 'West' : 'East'}. Goal: have the higher score in ${GAME.END}.</div>
-        ${alliancesLine(GAME.HOME[g.side])}
+        ${alliancesLine(GAME.HOME[g.side])}${homeFront()}${(sw => sw ? warBox(sw) : "")(GAME.warOf(g, GAME.HOME[g.side]))}
         <h3>What to do</h3><ul class="empty">
         <li><b>Click a country</b> on the map to see it and act on it.</li>
         <li>Push countries past <b>${GAME.BLOC}</b> toward you to bring them into your bloc. Each adds its value to your score.</li>
         <li>Neutral and unstable countries (few ● dots) are easiest to win.</li>
         <li>Coups and invasions are fast but raise <b>tension</b>. At 100: nuclear war, everybody loses. Use <b>Détente</b> to cool things down.</li>
         <li>Press <b>End Year</b> when you are done.</li></ul>`;
-      return;
+      bind(el); return;
     }
     const d = GAME.info(sel), c = g.c[sel], me = actor();
     let h = `<h2>${esc(d.name)}</h2><div class="sub">${esc(D.REGIONS[d.region])}${d.val && !GAME.isHome(sel) ? ' · worth ' + '★'.repeat(GAME.valueOf(g, sel)) : ''}</div>`;
@@ -725,6 +740,7 @@
     const pr = el.querySelector('#propose'); if (pr) pr.onclick = () => { toast(GAME.proposePeace(g, talkPicks)); talkPicks = []; after(); };
     el.querySelectorAll('[data-terr]').forEach(b => b.onclick = () => { const [id, kind] = b.dataset.terr.split('|'); toast(GAME.territoryAct(g, id, kind)); after(); });
     el.querySelectorAll('[data-form]').forEach(b => b.onclick = () => { toast(GAME.form(g, b.dataset.form)); after(); });
+    el.querySelectorAll('[data-prog]').forEach(b => b.onclick = () => { toast(GAME.programAct(g, g.side, b.dataset.prog)); after(); });
   }
   function after() { refresh(); if (g.over) gameOver(); }
   function newsList() {
@@ -764,6 +780,7 @@
   function verdictText(o) {
     const late = o.year > GAME.END + 1, when = late ? `in ${o.year - 1}` : 'in 1991';
     if (o.why === 'nuclear') return ['Nuclear war', 'Tension reached 100 and the missiles flew. In a nuclear war, nobody wins.'];
+    if (o.why === 'collapse') return [o.winner === g.side ? 'You win!' : 'Collapse', o.text];
     if (g.nation) {
       if (o.why === 'overthrown') return ['Overthrown', o.text];
       return [o.grade, `${GAME.info(g.nation).name} ${late ? 'has come this far' : 'comes through the Cold War'}. Your score changed by ${o.gain >= 0 ? '+' : ''}${o.gain} since 1947.`];

@@ -49,6 +49,19 @@
   const RIVALS = [['ISR', 'EGY'], ['ISR', 'SYR'], ['IND', 'PAK'], ['IRQ', 'IRN'], ['SOM', 'ETH'], ['CHN', 'IND'], ['VNM', 'KHM'],
     ['CHN', 'VNM'], ['GRC', 'TUR'], ['MAR', 'DZA'], ['LBY', 'TCD'], ['IRQ', 'KWT'], ['PER', 'ECU'], ['HND', 'SLV'], ['UGA', 'TZA'], ['ARG', 'CHL']];
   const CAPITAL_AT = 60;                           // how far a front must get to take the capital
+  // ---- the superpowers at home: programmes, the space race, morale ----
+  const PROGRAMS = {
+    space: { name: 'Space Programme', cost: 4, max: 2, help: 'Money for the rocket scientists. Reach a milestone first and the world takes notice (score).' },
+    arms: { name: 'Nuclear Build-up', cost: 5, max: 1, help: 'Arsenal +1. Tension rises and the economy carries the cost, but a bigger arsenal than the rival’s is respected (score +1).' },
+    homefront: { name: 'Home Front', cost: 4, max: 1, help: 'Housing, consumer goods, wages: home morale +6. At 0 morale the country falls apart.' },
+    army: { name: 'Expand the Army', cost: 4, max: 1, help: 'More divisions, tanks and carriers: army +3, up to 60.' },
+  };
+  const SPACE = [
+    { n: 'Satellite', c: 8, p: 2 }, { n: 'Animal in orbit', c: 8, p: 0 }, { n: 'Man in orbit', c: 10, p: 2 },
+    { n: 'Spacewalk', c: 10, p: 0 }, { n: 'Orbital docking', c: 12, p: 1 }, { n: 'Moon landing', c: 18, p: 3 },
+    { n: 'Space station', c: 14, p: 1 }, { n: 'Reusable shuttle', c: 14, p: 0 },
+  ];
+  const newPw = () => ({ US: { home: 70, econ: 100, growth: 3, arms: 2, space: 0, spaceProg: 0, buys: {} }, SU: { home: 70, econ: 45, growth: 6, arms: 1, space: 0, spaceProg: 0, buys: {} } });
 
   const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
   const rand = (lo, hi) => lo + Math.random() * (hi - lo);
@@ -179,7 +192,7 @@
     applyNames(null);
     const nation = who === 'US' || who === 'SU' ? null : who;
     const g = { side: nation ? null : who, nation, year: START, tension: 15, over: null, pending: [], news: [], c: {}, wars: [], warId: 0, pacts: [],
-      ip: { US: 14, SU: 13, ME: 6 }, bonus: { US: 0, SU: 0, ME: 0 }, detenteUsed: false, homeMoves: {}, start: 0, names: {}, peace: null, formed: [], cuts: [],
+      ip: { US: 14, SU: 13, ME: 6 }, bonus: { US: 0, SU: 0, ME: 0 }, detenteUsed: false, homeMoves: {}, start: 0, names: {}, peace: null, formed: [], cuts: [], pw: newPw(), firsts: {},
       reform: false, verdict: null };
     for (const d of D.COUNTRIES)
       g.c[d.key] = { a: d.a, stab: d.stab, independent: !d.indep || d.indep <= START, war: null, moves: 0, army: baseArmy(d.key), puppetOf: null,
@@ -217,7 +230,7 @@
     return n;
   }
   function income(g, side) {
-    let n = side === 'SU' ? 19 : 10;                   // the Soviet planned economy starts with fewer friends but more to spend
+    let n = (side === 'SU' ? 17.5 : 8.5) + (g.pw ? g.pw[side].econ / (side === 'SU' ? 30 : 50) : 1.8);   // the Soviet planned economy starts with fewer friends but more to spend; both grow with the economy
     for (const d of D.COUNTRIES) if (blocOf(g, d.key) === side) n += d.val * 0.25;
     return Math.round(n);
   }
@@ -430,7 +443,7 @@
     g.bonus.SU -= 5;
   }
   // is the Soviet Union weak enough to come apart? (reformed and not winning, or clearly losing)
-  const sovietWeak = g => (g.reform && score(g, 'SU') <= score(g, 'US') + 10) || score(g, 'SU') < score(g, 'US') - 12;
+  const sovietWeak = g => (g.reform && score(g, 'SU') <= score(g, 'US') + 10) || score(g, 'SU') < score(g, 'US') - 12 || (g.pw && g.pw.SU.home < 30);
   // an event war: nobody declares war for the player
   function eventWar(g, att, def, front) {
     if (att === g.nation) { say(g, `Hawks in ${info(att).name} demand war with ${info(def).name}. You hold them back.`); return null; }
@@ -624,6 +637,7 @@
   }
   // saves from before provinces: a cut was a depth, now it is the provinces that depth covered
   function fixCuts(g) {
+    if (!g.pw) { g.pw = newPw(); g.firsts = {}; }
     const old = (g.cuts || []).filter(k => !k.ids); g.cuts = (g.cuts || []).filter(k => k.ids);
     for (const k of old) { const ids = landBlock(g, k.taker, k.land, 1 / 3, k.depth || 0.3); if (ids.length) g.cuts.push({ land: k.land, taker: k.taker, ids, year: k.year, occ: k.occ || newOcc() }); }
     syncBorders(g);
@@ -914,6 +928,60 @@
   }
   // a nation at war can make peace on the spot, at a price
   function makePeace(g) { return proposePeace(g, ['white']); }
+  // ---- programmes at home (superpowers only) ----
+  function programCheck(g, side, id) {
+    const P = g.pw[side], R = PROGRAMS[id], r = { ok: false, cost: R.cost, why: '' };
+    if (g.over) return (r.why = 'The game is over', r);
+    if ((P.buys[id] || 0) >= R.max) return (r.why = R.max > 1 ? 'Done twice this year' : 'Done this year', r);
+    if (g.ip[side] < R.cost) return (r.why = 'Not enough IP', r);
+    if (id === 'space' && P.space >= SPACE.length) return (r.why = 'Every milestone reached', r);
+    if (id === 'arms' && P.arms >= 10) return (r.why = 'The arsenal is as big as it gets', r);
+    if (id === 'army' && g.c[HOME[side]].army >= 60) return (r.why = 'The army is at its biggest', r);
+    r.ok = true; return r;
+  }
+  function programAct(g, side, id) {
+    const r = programCheck(g, side, id); if (!r.ok) return r.why;
+    const P = g.pw[side]; g.ip[side] -= r.cost; P.buys[id] = (P.buys[id] || 0) + 1;
+    if (id === 'space') {
+      P.spaceProg += 5 * (side === 'SU' ? (g.year < 1962 ? 1.3 : 0.9) : (g.year < 1958 ? 0.8 : 1.2));   // the Soviets start ahead, America catches up
+      let out = 'The rockets get more money.';
+      while (P.space < SPACE.length && P.spaceProg >= SPACE[P.space].c) {
+        const m = SPACE[P.space]; P.spaceProg -= m.c;
+        if (g.firsts[P.space]) say(g, `Space: the ${NAME[side]} matches the ${m.n.toLowerCase()}.`);
+        else { g.firsts[P.space] = side; g.bonus[side] += m.p; say(g, `SPACE: the ${NAME[side]} achieves the world's first ${m.n.toLowerCase()}!`); }
+        out = `${m.n}!`; P.space++;
+      }
+      return out;
+    }
+    if (id === 'arms') { P.arms++; addTension(g, 4); if (P.arms > g.pw[OTHER[side]].arms) g.bonus[side] += 1; return `The arsenal grows to level ${P.arms}.`; }
+    if (id === 'homefront') { P.home = Math.min(100, P.home + 6); return 'Investment at home lifts morale.'; }
+    g.c[HOME[side]].army = Math.min(60, g.c[HOME[side]].army + 3); return `The army grows to ${Math.round(g.c[HOME[side]].army)}.`;
+  }
+  // each year: the economy grows (the Soviet one less and less), wars and the arms race cost, morale follows
+  function powerYear(g) {
+    const y = g.year;
+    for (const side of ['US', 'SU']) {
+      const P = g.pw[side], me = HOME[side];
+      let gr = side === 'US' ? 3.2 : (y < 1960 ? 6 : y < 1970 ? 4.2 : y < 1975 ? 3 : y < 1980 ? 1.8 : y < 1985 ? 0.6 : y < 1992 ? -0.5 : 1.8);
+      if (side === 'SU' && g.reform) gr += 1;
+      gr -= (P.buys.arms || 0) * 0.6 + P.arms * 0.08;
+      let h = 0;
+      const away = deployed(g, side) + g.wars.filter(w => w.att === me).length;
+      gr -= away * 0.5; h -= away * 3;
+      if (g.wars.some(w => w.def === me)) { gr -= 1; h -= 2; }
+      gr += rand(-0.6, 0.6);
+      P.growth = gr; P.econ *= 1 + gr / 100;
+      h += gr >= 3 ? 2 : gr >= 1.5 ? 0 : gr >= 0 ? -2 : -4;
+      if (g.tension >= 75) h -= 2;
+      P.home = clamp(P.home + h, 0, 100);
+      g.c[me].stab = clamp(Math.ceil(P.home / 20), 1, 5);
+      P.buys = {};
+      if (P.home <= 0 && !g.over) {
+        g.over = { winner: OTHER[side], why: 'collapse', text: side === 'SU' ? 'The Soviet Union has collapsed. The red flag comes down over the Kremlin.' : 'Exhausted and divided, America turns inward and abandons its allies.' };
+        say(g, g.over.text);
+      }
+    }
+  }
   function detente(g, side) {
     if (g.over || g.detenteUsed || g.ip[side] < DETENTE_COST) return false;
     g.ip[side] -= DETENTE_COST; g.detenteUsed = true; addTension(g, -15);
@@ -923,8 +991,13 @@
 
   // ================= the computer superpowers =================
   function computerTurn(g, side) {
-    const s = SIDE[side];
+    const s = SIDE[side], P = g.pw[side], O = g.pw[OTHER[side]];
     if (g.tension >= 70) detente(g, side);
+    // programmes at home first, when they matter
+    if (P.home < 40 && programCheck(g, side, 'homefront').ok) programAct(g, side, 'homefront');
+    if (g.year >= 1951 && !P.buys.space && (((O.space > P.space || (O.space === P.space && O.spaceProg > P.spaceProg)) && g.ip[side] >= 6) || (g.ip[side] >= income(g, side) * 0.7 + 4 && Math.random() < 0.3)) && programCheck(g, side, 'space').ok) programAct(g, side, 'space');   // keep up in the race, otherwise only with spare money
+    if (g.tension < 60 && P.arms < O.arms + (side === 'SU' ? 1 : 0) && P.arms < 8 && g.ip[side] >= income(g, side) * 0.8 + 5 && programCheck(g, side, 'arms').ok) programAct(g, side, 'arms');
+    if (g.wars.some(w => w.def === HOME[side]) && programCheck(g, side, 'army').ok) programAct(g, side, 'army');
     for (let tries = 0; tries < 40 && g.ip[side] >= 1; tries++) {
       const options = [];
       for (const d of D.COUNTRIES) {
@@ -1049,6 +1122,8 @@
       const [a, b] = Math.random() < 0.5 ? [x, y] : [y, x];
       if (Math.abs(cx.a - cy.a) > 60 && allyHelp(g, b, a) < 20 && Math.random() < 0.025) { startWar(g, a, b, 0); break; }
     }
+    powerYear(g);
+    if (g.over) return;
     partyYear(g);
     govYear(g);
     ownedYear(g);
@@ -1070,7 +1145,7 @@
       if (c.stab < 3 && Math.random() < 0.06) c.stab++;
       if (c.stab <= 2 && wars < 5 && Math.abs(c.a) < 75 && Math.random() < 0.012 * (4 - c.stab)) { civilWar(g, d.key, c.a >= 0 ? 'SU' : 'US', 0); wars++; }
     }
-    addTension(g, -5);
+    addTension(g, g.pw.US.arms >= 6 && g.pw.SU.arms >= 6 ? -3 : -5);        // two big arsenals keep the world nervous
     if (g.over) return;
     // ---- a new year ----
     g.year++; g.detenteUsed = false; g.homeMoves = {}; g.pushed = 0;
@@ -1170,6 +1245,7 @@
   function finish(g) { if (!g.over) g.over = judge(g); }
 
   G.GAME = { ARM_COST, TROOPS_COST, UPKEEP, CAPITAL_AT, START, END, BLOC, NAME, HOME, SIDE, ACTIONS, HOME_ACTIONS, DETENTE_COST,
+    PROGRAMS, SPACE, programCheck, programAct,
     newGame, check, act, homeCheck, homeAct, warOf, warCheck, warHelp, makePeace, deployed, detente, endYear, choose,
     score, income, nationScore, nationIncome, friendsOf, puppetsOf, pactsOf, allied, blocOf, leaning, isHome, info, neighbours,
     borders, landsOf, capitalName, computerTurn, baseArmy, valueOf, PARTIES, PARTY, partyCheck, partyAct,
