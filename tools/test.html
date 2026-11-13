@@ -24,9 +24,8 @@
     <svg id="map" viewBox="0 0 1000 520" preserveAspectRatio="xMidYMid meet"></svg>
     <div id="tip" hidden></div>
     <div id="legend">
-      <span><i class="hatch"></i>Colony</span>
-      <span>⚔ Civil war</span>
-      <span style="color:#ffa040">➜ War</span>
+      <div class="modes"><button data-mode="nat" class="on" title="Every country in its own colour (1)">Nations</button><button data-mode="pact" title="Alliances (2)">Alliances</button><button data-mode="rel" title="How the world sees you (3)">Relations</button><button data-mode="mil" title="Army sizes (4)">Military</button><button data-mode="gov" title="Kinds of government (5)">Government</button><button data-mode="stab" title="Stability (6)">Stability</button></div>
+      <div class="keys"><span id="legend-dyn"></span><span><i class="hatch"></i>Colony</span><span>⚔ Civil war</span><span style="color:#ffa040">➜ War</span></div>
     </div>
     <ol id="news"></ol>
   </section>
@@ -67,6 +66,7 @@ if(location.hash.includes('states')){ const g=ironCurtain.game; g.wars=[]; g.c.G
   add('ROU','SUN',40,20); add('HUN','YUG',45,25); add('IRL','GBR',35,15); add('CHN','SUN',30,10); ironCurtain.refresh(); }
 if(pick){ const p=[...document.querySelectorAll('path.land')].find(p=>p.__data__&&p.__data__.key===pick); if(p) p.dispatchEvent(new MouseEvent(location.hash.includes('dbl')?'dblclick':'click',{bubbles:true})); }
 const zm=location.hash.match(/z=(\w+)/); if(zm) ironCurtain.zoomTo(zm[1]);
+const mm=location.hash.match(/mode=(\w+)/); if(mm) document.querySelector('[data-mode="'+mm[1]+'"]').click();
 if(location.hash.includes('mid')){ const t0=performance.now(); while(performance.now()-t0<800); d3.timerFlush(); }
 const vm=location.hash.match(/v=(-?[\d.]+):(-?[\d.]+):([\d.]+)/); if(vm) ironCurtain.view(+vm[1],+vm[2],+vm[3]);
 const dm=location.hash.match(/dbg=([A-Z]+):([A-Z]+)/); if(dm){ const f=ironCurtain.frontField(dm[1],dm[2]); const p=document.createElement('pre'); p.id='dbg'; p.textContent='DBG '+JSON.stringify({border:f.borderD.slice(0,300), size:f.size, th:f.thrusts.length, d25:f.at(0.25).d.length, d90:f.at(0.9).d.length, heart:f.heart}); document.body.appendChild(p); }

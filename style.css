@@ -165,3 +165,11 @@ main { flex: 1; display: flex; min-height: 0; }
 .zone.cut .zonefill { pointer-events: fill; cursor: pointer; }
 .selected.region { stroke-dasharray: 5 3; }
 #tip .dim { color: #8a8f94; font-size: 11px; }
+/* map modes */
+#legend { flex-direction: column; gap: 6px; }
+#legend .modes { display: flex; flex-wrap: wrap; gap: 2px; }
+#legend .modes button { background: transparent; border: 1px solid transparent; color: var(--dim); font: inherit; font-size: 12px; padding: 2px 7px; border-radius: 4px; cursor: pointer; }
+#legend .modes button:hover { color: var(--ink); }
+#legend .modes button.on { background: #e8c45a; color: #111; }
+#legend .keys { display: flex; flex-wrap: wrap; gap: 10px; }
+#legend-dyn { display: contents; }

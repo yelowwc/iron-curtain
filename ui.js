@@ -267,12 +267,46 @@
     const used = new Set((NEIGHBOURS[d.key] || []).map(k => natColour[k]).filter(Boolean));
     natColour[d.key] = NAT_PAL.find(c => !used.has(c)) || NAT_PAL[d.key.charCodeAt(0) % NAT_PAL.length];
   });
+  // map modes: Nations (default), Alliances, Relations (to you), Military, Government, Stability
+  let mapMode = 'nat';
+  const GOV_COL = { Democracy: '#4f9fd6', Republic: '#8fb3a0', Monarchy: '#9b7fd0', Dictatorship: '#a0703c', Junta: '#7d8a3a', Socialist: '#d04a3a',
+    Revolutionary: '#f08a3c', 'Islamic Republic': '#2f9e5b', Theocracy: '#d9a441', 'Minority rule': '#c9a227' };
+  const STAB_COL = ['#555', '#b3261e', '#e07a3c', '#e8c45a', '#9cc36b', '#3e9e5b'];
+  const govOf = key => GAME.isHome(key) ? (key === 'USA' ? 'Democracy' : 'Socialist') : g.c[key].gov;
+  function mainPact(key) { const ps = GAME.pactsOf(g, key); return ps.length ? ps.slice().sort((a, b) => b.members.length - a.members.length)[0] : null; }
+  function relColour(key) {
+    const me = GAME.playerKey(g);
+    if (key === me) return '#e8c45a';
+    const w = GAME.warOf(g, me); if (w && (w.att === key || w.def === key)) return '#e0362b';
+    if (GAME.allied(g, me, key)) return '#2e9e6b';
+    const mine = g.nation ? g.c[g.nation].a : GAME.SIDE[g.side] * 100, their = GAME.isHome(key) ? GAME.SIDE[key === 'USA' ? 'US' : 'SU'] * 100 : g.c[key].a, d = Math.abs(their - mine);
+    if (d <= 20) return '#7cc36b';
+    return d3.interpolateLab('#8a8a80', '#7a2a24')(Math.min(1, (d - 20) / 100));
+  }
   function colour(key) {
     if (!key || !g) return '#2a2e2c';
     if (g.c[key] && g.c[key].owner) return colour(g.c[key].owner);
     if (!GAME.isHome(key) && !g.c[key].independent) return 'url(#colony)';
+    if (mapMode === 'pact') { const p = mainPact(key); return p ? p.color : '#41453f'; }
+    if (mapMode === 'rel') return relColour(key);
+    if (mapMode === 'mil') return d3.interpolateYlOrRd(0.08 + Math.min(1, g.c[key].army / (GAME.isHome(key) ? 50 : 24)) * 0.85);
+    if (mapMode === 'gov') return GOV_COL[govOf(key)] || '#777';
+    if (mapMode === 'stab') return STAB_COL[g.c[key].stab] || '#777';
     return natColour[key] || '#8d8873';
   }
+  function legendHtml() {
+    const sw = (c, t) => `<span><i style="background:${c}"></i>${t}</span>`;
+    switch (mapMode) {
+      case 'pact': return g.pacts.map(p => sw(p.color, esc(p.name))).join('') || '<span>No alliances yet</span>';
+      case 'rel': return sw('#e8c45a', 'You') + sw('#2e9e6b', 'Allies') + sw('#7cc36b', 'Friends') + sw('#8a8a80', 'Indifferent') + sw('#7a2a24', 'Hostile') + sw('#e0362b', 'At war with you');
+      case 'mil': return sw('#fff3b0', 'Small army') + sw('#f08a3c', '') + sw('#bd0026', 'Big army');
+      case 'gov': { const seen = new Set(D.COUNTRIES.filter(d => !g.c[d.key].owner && (g.c[d.key].independent || GAME.isHome(d.key))).map(d => govOf(d.key))); return [...seen].filter(x => GOV_COL[x]).map(x => sw(GOV_COL[x], x)).join(''); }
+      case 'stab': return [1, 2, 3, 4, 5].map(i => sw(STAB_COL[i], ['', 'Chaotic', 'Shaky', 'Steady', 'Stable', 'Rock solid'][i])).join('');
+    }
+    return '';
+  }
+  function setMode(m) { mapMode = m; document.querySelectorAll('[data-mode]').forEach(b => b.classList.toggle('on', b.dataset.mode === m)); if (g) drawMap(); }
+  document.querySelectorAll('[data-mode]').forEach(b => b.onclick = () => setMode(b.dataset.mode));
   const campColour = { US: '#3d7fd6', SU: '#d23b30' };
   // occupied land must stand out from the land it sits on: if the two colours are close, use a deeper shade
   function zoneColour(fill, under) {
@@ -343,6 +377,7 @@
   let busyUntil = 0;                                       // pop-ups wait until the fronts have finished moving
   function drawMap() {
     drawBorders();
+    $('legend-dyn').innerHTML = legendHtml();
     lands.attr('fill', f => colour(f.key)).classed('restless', f => !!(f.key && g.c[f.key] && g.c[f.key].owner && g.c[f.key].occ && g.c[f.key].occ.unrest >= 60));
     selLine.attr('d', sel ? (regionSel ? regionOutline(sel) : stateOutline(sel)) : g.nation ? stateOutline(g.nation) : null).classed('mine', !sel && !!g.nation).classed('region', !!sel && regionSel);
     // wars between countries: the winning side holds a band of the other's land along their border
@@ -867,7 +902,8 @@
   };
   $('detente').onclick = () => { if (g && g.side && GAME.detente(g, g.side)) { toast('Summit held: tension −15'); refresh(); } };
   $('help').onclick = () => { if (g) { modal(`<h1>How to play</h1>${howTo()}<button class="go" id="ok">OK</button>`); $('ok').onclick = () => { close(); showEvents(); }; } };
-  document.addEventListener('keydown', e => { if (e.key === 'Enter' && $('modal').hidden) endYear(); if (e.key === 'Escape' && $('modal').hidden) { sel = null; refresh(); } });
+  const MODES = ['nat', 'pact', 'rel', 'mil', 'gov', 'stab'];
+  document.addEventListener('keydown', e => { if (e.target.tagName === 'INPUT') return; if (/^[1-6]$/.test(e.key) && $('modal').hidden) setMode(MODES[+e.key - 1]); if ((e.key === 'm' || e.key === 'M') && $('modal').hidden) setMode(MODES[(MODES.indexOf(mapMode) + 1) % MODES.length]); if (e.key === 'Enter' && $('modal').hidden) endYear(); if (e.key === 'Escape' && $('modal').hidden) { sel = null; refresh(); } });
 
   // for the browser console and tests: ironCurtain.game is the game being played
   window.ironCurtain = { get game() { return g; }, set game(v) { g = v; }, start, refresh, zoomTo, frontField, center,

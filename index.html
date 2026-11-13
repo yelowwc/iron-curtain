@@ -24,9 +24,8 @@
     <svg id="map" viewBox="0 0 1000 520" preserveAspectRatio="xMidYMid meet"></svg>
     <div id="tip" hidden></div>
     <div id="legend">
-      <span><i class="hatch"></i>Colony</span>
-      <span>⚔ Civil war</span>
-      <span style="color:#ffa040">➜ War</span>
+      <div class="modes"><button data-mode="nat" class="on" title="Every country in its own colour (1)">Nations</button><button data-mode="pact" title="Alliances (2)">Alliances</button><button data-mode="rel" title="How the world sees you (3)">Relations</button><button data-mode="mil" title="Army sizes (4)">Military</button><button data-mode="gov" title="Kinds of government (5)">Government</button><button data-mode="stab" title="Stability (6)">Stability</button></div>
+      <div class="keys"><span id="legend-dyn"></span><span><i class="hatch"></i>Colony</span><span>⚔ Civil war</span><span style="color:#ffa040">➜ War</span></div>
     </div>
     <ol id="news"></ol>
   </section>
