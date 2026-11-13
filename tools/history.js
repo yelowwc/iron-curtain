@@ -12,7 +12,7 @@ for (let i = 0; i < runs; i++) {
     while (!g.over && g.year < until) {
       while (g.pending.length) GAME.choose(g, 0);
       GAME.computerTurn(g, g.side);
-      if (g.peace) GAME.conference(g, ['government']);
+      if (g.conf) GAME.confAuto(g);
       const y0 = g.year; GAME.endYear(g); log.push(...g.news.filter(n => n.year >= y0).map(n => n.text));
       maxWars = Math.max(maxWars, g.wars.length);
     }

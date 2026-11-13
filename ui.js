@@ -30,7 +30,7 @@
   const lands = root.append('g').selectAll('path').data(shapes).join('path')
     .attr('class', f => 'land' + (f.home ? ' click' : '')).attr('d', path).attr('fill', '#2a2e2c')
     .on('mousemove', (e, f) => hover(e, f)).on('mouseleave', () => hover())
-    .on('click', (e, f) => { if (f.key) select(GAME.stateOf(g, f.key)); })
+    .on('click', (e, f) => { if (g && g.conf && claimClick(f)) return; if (f.key) select(GAME.stateOf(g, f.key)); })
     .on('dblclick', (e, f) => { if (f.key) selectRegion(f.key); });                 // double click: that region
   // who holds each province: follows the cuts; every outline cache is thrown away when it changes
   let holdSig = '';
@@ -378,7 +378,10 @@
   function drawMap() {
     drawBorders();
     $('legend-dyn').innerHTML = legendHtml();
-    lands.attr('fill', f => colour(f.key)).classed('restless', f => !!(f.key && g.c[f.key] && g.c[f.key].owner && g.c[f.key].occ && g.c[f.key].occ.unrest >= 60));
+    const cv = g.conf ? GAME.confView(g) : null, claimBy = {}, canTake = new Set();
+    if (cv) { for (const c of cv.claims) for (const i of c.ids || []) claimBy[i] = c.by; if (cv.myTurn) for (const o of cv.options) if (o.kind === 'take' && o.ok) canTake.add(o.target); }
+    lands.attr('fill', f => claimBy[f.pid] ? colour(claimBy[f.pid]) : colour(f.key)).classed('claimed', f => !!claimBy[f.pid]).classed('claimable', f => canTake.has(f.pid))
+      .classed('restless', f => !!(f.key && g.c[f.key] && g.c[f.key].owner && g.c[f.key].occ && g.c[f.key].occ.unrest >= 60));
     selLine.attr('d', sel ? (regionSel ? regionOutline(sel) : stateOutline(sel)) : g.nation ? stateOutline(g.nation) : null).classed('mine', !sel && !!g.nation).classed('region', !!sel && regionSel);
     // wars between countries: the winning side holds a band of the other's land along their border
     const W2 = g.wars.filter(w => center[w.att] && center[w.def]);
@@ -546,7 +549,12 @@
     hoverLine.attr('d', stateOutline(f.key));
     const d = GAME.info(f.key), c = g.c[f.key];
     const ps = GAME.pactsOf(g, f.key).map(p => p.name).join(', ');
-    tip.innerHTML = `<b>${esc(d.name)}${f.key === g.nation ? ' (you)' : ''}</b>${provLine}<br>${c.owner ? 'Part of ' + esc(GAME.info(c.owner).name) + (c.owner === g.nation ? ' (yours)' : '') : GAME.isHome(f.key) ? 'Superpower' : !c.independent ? 'Colony of ' + esc(d.colony) + ' until ' + d.indep : GAME.leaning(c.a) + (c.war ? ' · ⚔ civil war' : '')}
+    let confLine = '';
+    if (g.conf) {
+      const cv = GAME.confView(g), cl = cv.claims.find(c => (c.ids || []).includes(f.pid)), o = cv.options.find(x => x.kind === 'take' && x.target === f.pid);
+      confLine = cl ? `<br><b style="color:#e8c45a">Claimed by ${esc(cl.byName)}</b>` : o ? `<br><b style="color:#e8c45a">${o.ok ? 'Click to take: ' + o.cost + ' points' : esc(o.why)}</b>` : '';
+    }
+    tip.innerHTML = `<b>${esc(d.name)}${f.key === g.nation ? ' (you)' : ''}</b>${provLine}${confLine}<br>${c.owner ? 'Part of ' + esc(GAME.info(c.owner).name) + (c.owner === g.nation ? ' (yours)' : '') : GAME.isHome(f.key) ? 'Superpower' : !c.independent ? 'Colony of ' + esc(d.colony) + ' until ' + d.indep : GAME.leaning(c.a) + (c.war ? ' · ⚔ civil war' : '')}
       ${c.independent || GAME.isHome(f.key) ? `<br>Army ${Math.round(c.army)}` : ''}${ps ? '<br>' + esc(ps) : ''}${GAME.warOf(g, f.key) ? '<br>⚔ at war' : ''}${GAME.lostLand(g, f.key).map(k => '<br>Lost ' + esc(GAME.provList(k.ids || [])) + ' to ' + esc(GAME.info(k.taker).name)).join('')}${region !== f.key ? '<br><i>Region: ' + esc(GAME.info(region).name) + (g.c[region].occ && !g.c[region].occ.core ? ' · unrest ' + Math.round(g.c[region].occ.unrest) : '') + '</i>' : ''}<br><span class="dim">Double-click: this region</span>`;
     tip.hidden = false;
     const r = $('mapbox').getBoundingClientRect();
@@ -558,7 +566,8 @@
     const t = g.tension, tc = t >= 80 ? '#ff4b3e' : t >= 55 ? '#f0a03c' : '#6fbf73';
     $('year').textContent = g.year;
     $('tension').innerHTML = `Tension <span class="bar"><i style="width:${t}%;background:${tc}"></i></span><b style="color:${tc}">${Math.round(t)}</b>`;
-    $('end').disabled = !!g.over;
+    $('end').disabled = !!g.over || !!g.conf;
+    $('end').title = g.conf ? 'Finish the peace conference first' : 'End the year (Enter)';
     $('detente').hidden = !!g.nation;
     $('finish').hidden = !!g.over || g.year <= GAME.END;
     if (g.nation) {
@@ -723,7 +732,31 @@
     h += `<div class="sub" style="margin-top:8px">Your score grows with your army, stability, friends (countries that think like you) and defeated enemies. Click another country to act on it.</div>`;
     return h;
   }
+  // ---- the peace conference: the side panel shows the table, the map takes clicks ----
+  function claimClick(f) {
+    const cv = GAME.confView(g); if (!cv || !cv.myTurn) return false;
+    const o = cv.options.find(x => x.kind === 'take' && x.target === f.pid); if (!o) return false;
+    toast(o.ok ? GAME.confDemand(g, o.id) : o.why); after(); if (!g.conf) showEvents();
+    return true;
+  }
+  function confPanel(el) {
+    const v = GAME.confView(g), me = v.winners.find(x => x.me), takes = v.options.filter(o => o.kind === 'take');
+    const cheapest = takes.filter(o => o.ok).reduce((m, o) => Math.min(m, o.cost), Infinity);
+    const other = v.options.filter(o => o.kind !== 'take');
+    const turn = v.winners.filter(x => !x.done).sort((a, b) => b.pts - a.pts)[0];
+    el.innerHTML = `<div class="kicker2">Peace conference</div><h2>${esc(v.name)}</h2><div class="sub">${esc(v.war)} · defeated: <b>${esc(v.loser)}</b></div>
+      <h3>At the table</h3>${v.winners.map(x => `<div class="confw ${x.me ? 'me' : ''} ${turn && turn.key === x.key ? 'turn' : ''}"><span>${turn && turn.key === x.key ? '▸ ' : ''}${esc(x.name)}${x.me ? ' (you)' : ''}${x.done ? ' · passed' : ''}</span><b>${Math.round(x.pts)} pts</b></div>`).join('')}
+      <div class="sub">Whoever has the most points left makes the next demand. When everyone has passed, the treaty is signed.</div>
+      ${v.claims.length ? `<h3>Demands so far</h3><div class="claims">${v.claims.map(c => `<div><i style="background:${colour(c.by)}"></i><b>${esc(c.byName)}</b>: ${esc(c.name.replace(/^./, m => m.toLowerCase()))}</div>`).join('')}</div>` : ''}
+      ${me && !me.done ? `<h3>Your demands · ${Math.round(me.pts)} points</h3>
+      <div class="sub">${v.myTurn ? (takes.some(o => o.ok) ? `<b>Click a highlighted province</b> on the map to take it (from ${cheapest} points). It must touch your land or what you have already claimed.` : 'No province you can take right now.') : 'Waiting for the others…'}</div>
+      ${other.map(o => btn(`data-demand="${o.id}"`, o.name, o.cost, v.myTurn ? o : { ok: false, why: 'Not your turn' }, o.help).replace(' IP</em>', ' pts</em>')).join('')}
+      <button class="act" id="confpass" style="margin-top:10px;border-color:#e8c45a"><b>I demand nothing more</b><em>pass</em><small>Leave the table. The others finish their demands and the treaty is signed.</small></button>` : '<div class="sub">You have finished.</div>'}`;
+    el.querySelectorAll('[data-demand]').forEach(b => b.onclick = () => { toast(GAME.confDemand(g, b.dataset.demand)); after(); if (!g.conf) showEvents(); });
+    const ps = el.querySelector('#confpass'); if (ps) ps.onclick = () => { GAME.confPass(g); toast('You sign. The others finish their demands.'); after(); showEvents(); };
+  }
   function panel() {
+    if (g.conf) return confPanel($('panel'));
     const el = $('panel');
     const terr = g.nation && sel && g.c[sel] && g.c[sel].owner === g.nation && GAME.territories(g).find(x => x.id === sel);
     if (terr) { const t = terr; el.innerHTML = `<h2>${esc(GAME.info(sel).name)} <span class="you">your territory</span></h2>` + terrCard(t) + '<h3 style="margin-top:18px">Your nation</h3>' + homePanel(); bind(el); return; }
@@ -820,21 +853,7 @@
   // ================= pop-ups =================
   function modal(html) { $('card').innerHTML = html; $('modal').hidden = false; }
   function close() { $('modal').hidden = true; }
-  function conference() {
-    const P = g.peace, terms = GAME.termsFor(g, P.win, P.lose).filter(t => t.id !== 'white');
-    let picks = [];
-    const draw = () => {
-      const spent = picks.reduce((t, id) => t + GAME.PEACE_TERMS[id].cost, 0);
-      modal(`<div class="kicker">${g.year} · Peace conference</div><h1>${esc(GAME.info(P.lose).name)} is defeated</h1>
-        <p>You won the war. Choose your terms: you have <b>${100 - spent}</b> of 100 points left.</p>
-        ${terms.map(t => { const can = t.ok && (picks.includes(t.id) || spent + t.cost <= 100);
-          return `<button class="choice ${picks.includes(t.id) ? 'on' : ''}" data-t="${t.id}" ${can ? '' : 'disabled'}><b>${esc(t.name)} · ${t.cost}</b><span>${esc(t.ok ? t.help : t.why)}</span></button>`; }).join('')}
-        <button class="go" id="sign">SIGN THE TREATY</button>`);
-      document.querySelectorAll('[data-t]').forEach(b => b.onclick = () => { const id = b.dataset.t; picks = picks.includes(id) ? picks.filter(x => x !== id) : [...picks, id]; draw(); });
-      $('sign').onclick = () => { GAME.conference(g, picks); refresh(); showEvents(); };
-    };
-    draw();
-  }
+
   // the result of a game (or of the Cold War, at the end of 1991)
   function verdictText(o) {
     const late = o.year > GAME.END + 1, when = late ? `in ${o.year - 1}` : 'in 1991';
@@ -857,7 +876,7 @@
       $('again').onclick = () => { try { localStorage.removeItem(SAVE); } catch (e) { } start(); };
       return;
     }
-    if (g.peace) return conference();
+    if (g.conf) { close(); if (!sel) { sel = g.conf.lose; } zoomTo(g.conf.lose); refresh(); return; }
     const ov = GAME.offerView(g);
     if (ov) {
       modal(`<div class="kicker">${g.year} · Peace offer</div><h1>${esc(ov.from)} ${ov.youWin ? 'asks for peace' : 'offers peace on its terms'}</h1>
@@ -943,7 +962,7 @@
   document.addEventListener('keydown', e => { if (e.target.tagName === 'INPUT') return; if (/^[1-6]$/.test(e.key) && $('modal').hidden) setMode(MODES[+e.key - 1]); if ((e.key === 'm' || e.key === 'M') && $('modal').hidden) setMode(MODES[(MODES.indexOf(mapMode) + 1) % MODES.length]); if (e.key === 'Enter' && $('modal').hidden) endYear(); if (e.key === 'Escape' && $('modal').hidden) { sel = null; refresh(); } });
 
   // for the browser console and tests: ironCurtain.game is the game being played
-  window.ironCurtain = { get game() { return g; }, set game(v) { g = v; }, start, refresh, zoomTo, frontField, center,
+  window.ironCurtain = { get game() { return g; }, set game(v) { g = v; }, start, refresh, zoomTo, frontField, center, select,
     view: (lon, lat, k) => { const [x, y] = proj([lon, lat]); svg.call(zoom.transform, d3.zoomIdentity.translate(W / 2 - k * x, H / 2 - k * y).scale(k)); } };
   start();
 })();

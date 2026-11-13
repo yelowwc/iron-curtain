@@ -231,7 +231,7 @@
     return n;
   }
   function income(g, side) {
-    let n = (side === 'SU' ? 17.3 : 8.6) + (g.pw ? g.pw[side].econ / (side === 'SU' ? 30 : 50) : 1.8);   // the Soviet planned economy starts with fewer friends but more to spend; both grow with the economy
+    let n = (side === 'SU' ? 17.3 : 8.1) + (g.pw ? g.pw[side].econ / (side === 'SU' ? 30 : 50) : 1.8);   // the Soviet planned economy starts with fewer friends but more to spend; both grow with the economy
     for (const d of D.COUNTRIES) if (blocOf(g, d.key) === side) n += d.val * 0.25;
     return Math.round(n);
   }
@@ -887,13 +887,186 @@
       : { name: t.id === 'land' ? t.name.replace(/^Take /, 'You hand over ') : t.id === 'reparations' ? 'You pay reparations' : t.id === 'disarm' ? 'Your army is cut in half' : t.id === 'government' ? `A government loyal to ${F} takes over (you are out)` : t.name, help: '' };
     return { from: F, youWin, terms: o.picks.map(id => terms.find(t => t.id === id)).filter(Boolean).map(say2) };
   }
-  // a won war: the player picks terms worth up to 100 points
-  function conference(g, picks) {
-    const P = g.peace; if (!P) return;
-    const cost = picks.reduce((t, id) => t + termCost(g, P.win, P.lose, id), 0);
-    if (cost > 100) return 'Too many demands';
-    g.peace = null;
-    applyTerms(g, P.win, P.lose, picks.length ? picks : ['white'], 1);
+  // ================= the peace conference (Hearts of Iron style) =================
+  // A war won outright ends at the table. Every winner gets points for its part in the war: the
+  // winner 100, a superpower that sent troops 50, allies who stood by the defender 25. Turn by turn,
+  // whoever has the most points left makes one demand: a province (clicked on the map), a puppet,
+  // the whole country, a new government, freedom for one of its regions, reparations, disarmament.
+  // When everybody has passed, the treaty is signed. Land must touch what the claimant holds or has
+  // claimed, the capital stays (unless the whole country is annexed), the loser is never cut in two,
+  // and provinces alone take at most a third of it.
+  const TOWNS = ['Geneva', 'Vienna', 'Helsinki', 'Stockholm', 'Bern', 'New Delhi', 'Cairo', 'Belgrade', 'Jakarta', 'Addis Ababa', 'Lima', 'Oslo', 'Reykjavik', 'Tashkent', 'Paris', 'Rangoon', 'Accra'];
+  function startConference(g, w, done) {
+    const win = w[done], lose = w[done === 'att' ? 'def' : 'att'];
+    const winners = [{ key: win, pts: 100, done: false, main: true }];
+    for (const p of ['US', 'SU']) if (w.troops[p] === done && HOME[p] !== win) winners.push({ key: HOME[p], pts: 50, done: false });
+    if (done === 'def') for (const k of [...new Set(pactsOf(g, win).flatMap(p => p.members))]) {
+      if (k === win || winners.some(x => x.key === k) || allied(g, k, lose) || winners.length >= 5) continue;
+      if (isHome(k) || borders(g, k, lose)) winners.push({ key: k, pts: 25, done: false });
+    }
+    const conf = { att: w.att, def: w.def, win, lose, winners, claims: [], annexOk: !!w.annexOnWin && done === 'att',
+      town: TOWNS[(g.year + w.id) % TOWNS.length], year: g.year };
+    conf.total = blockVal(confPool(g, conf)) || 1;
+    say(g, `${info(lose).name} is defeated. The winners meet at ${conf.town} to dictate the peace.`);
+    if (winners.some(x => x.key === playerKey(g)) && !g.over) { g.conf = conf; runConf(g); }
+    else { while (confStep(g, conf)); applyConf(g, conf); }
+  }
+  // every province the loser holds: its own land, its regions, what it annexed
+  const loserLands = (g, conf) => [conf.lose, ...ownedBy(g, conf.lose)];
+  function confPool(g, conf) { const L = new Set(loserLands(g, conf)); return PROV.filter(p => L.has(holderOf(g, p.id))).map(p => p.id); }
+  const claimedIds = conf => new Set(conf.claims.flatMap(c => c.ids || []));
+  const whole = conf => conf.claims.some(c => c.kind === 'annex');
+  const once = (conf, kind) => conf.claims.some(c => c.kind === kind);
+  const confLandVal = conf => blockVal([...claimedIds(conf)]);
+  // the loser's provinces still on the table, and the ones that touch claimant k's land or its claims
+  function confReach(g, conf, k) {
+    const st = stateOf(g, k), claimed = claimedIds(conf), mine = new Set(conf.claims.filter(c => c.by === k).flatMap(c => c.ids || []));
+    const pool = new Set(confPool(g, conf).filter(i => !claimed.has(i)));
+    const ownsAt = id => mine.has(id) || (!pool.has(id) && !claimed.has(id) && stateOf(g, holderOf(g, id)) === st);
+    const touching = new Set([...pool].filter(id => Object.keys(PBY[id].nb).some(q => ownsAt(+q))));
+    return { pool, touching };
+  }
+  const pieces = set => {
+    const seen = new Set(); let n = 0;
+    for (const id of set) {
+      if (seen.has(id)) continue; n++;
+      const s = [id]; seen.add(id);
+      while (s.length) { const x = s.pop(); for (const q in PBY[x].nb) { const j = +q; if (set.has(j) && !seen.has(j)) { seen.add(j); s.push(j); } } }
+    }
+    return n;
+  };
+  const provCost = (conf, k, id) => Math.round((6 + provVal(id) * 30) * (k === conf.win ? 0.8 : 1));
+  const capOf = key => PROV.find(p => p.key === key && p.cap);
+  // what claimant k can demand now. kinds: take (one province), annex, puppet, gov, free (a region), rep, disarm
+  function confOptions(g, conf, k) {
+    const W = conf.winners.find(x => x.key === k), out = [], L = conf.lose, Lname = info(L).name, lv = valueOf(g, L);
+    if (!W || W.done || whole(conf)) return out;
+    const add = (kind, target, cost, name, help, ok, why, ids) => { cost = Math.round(cost); out.push({ id: kind + ':' + target, kind, target, cost, name, help, ids, ok: ok && W.pts >= cost, why: !ok ? why : W.pts < cost ? 'Not enough points' : '' }); };
+    const { pool, touching } = confReach(g, conf, k), base = pieces(pool), cap = capOf(L), room = conf.total / 3 - confLandVal(conf);
+    for (const id of touching) {
+      if (cap && cap.id === id) continue;
+      const rest = new Set(pool); rest.delete(id);
+      const split = rest.size > 0 && pieces(rest) > base, big = provVal(id) > room + 1e-9;
+      add('take', id, provCost(conf, k, id), `Take ${PBY[id].name}`, `${PBY[id].name} (${info(PBY[id].key).name}) becomes yours.`, !split && !big,
+        split ? 'It would cut the country in two' : 'Provinces alone may take at most a third of the country', [id]);
+    }
+    if (!isHome(L)) {
+      const rest = [...pool].reduce((t, i) => t + provCost(conf, k, i), 0);
+      const reach = borders(g, k, L) || touching.size > 0, govSet = once(conf, 'puppet') || once(conf, 'gov');
+      if (!isHome(k)) add('annex', L, Math.min(rest * 0.7, 100) + 10, `Annex ${Lname}`, 'The whole country becomes yours. It may rebel later.', reach && !govSet, govSet ? 'Its government is already decided' : 'Must border your land');
+      add('puppet', L, 22 + lv * 6, `Puppet ${Lname}`, 'A government that answers to you.', !govSet, 'Its government is already decided');
+      add('gov', L, 15 + lv * 3, `New government in ${Lname}`, 'A friendly government takes power there.', !govSet, 'Its government is already decided');
+    }
+    for (const r of ownedBy(g, L)) if (!conf.claims.some(c => c.target === r)) add('free', r, 8 + info(r).val * 4, `Free ${info(r).name}`, `${info(r).name} becomes an independent country.`, true, '');
+    if (!once(conf, 'rep')) add('rep', L, 14, `Reparations from ${Lname}`, 'They pay: IP, or soldiers.', true, '');
+    if (!once(conf, 'disarm')) add('disarm', L, 10, `Disarm ${Lname}`, 'Their army is cut in half.', true, '');
+    return out;
+  }
+  function confClaim(g, conf, k, o) {
+    conf.claims.push({ by: k, kind: o.kind, target: o.target, ids: o.ids, name: o.name, cost: o.cost });
+    conf.winners.find(x => x.key === k).pts -= o.cost;
+  }
+  // the computer's demand: land next door (cheap and close) first; superpowers prefer governments to land
+  function aiConfPick(g, conf, k) {
+    const sp = isHome(k), main = k === conf.win, lv = valueOf(g, conf.lose);
+    const conquests = ownedBy(g, k).filter(x => !isUnionPart(g, x)).length;
+    let best = null, bv = 0.45;
+    for (const o of confOptions(g, conf, k)) {
+      if (!o.ok) continue;
+      let v = 0;
+      if (o.kind === 'take') v = provVal(o.target) * 30 * (sp ? 0.25 : 1) * (main ? 1.3 : 1);
+      if (o.kind === 'annex') v = main && conf.annexOk ? 999 : (!sp && main && conquests < 2 && lv <= valueOf(g, k) && Math.random() < 0.3 ? lv * 9 : 0);
+      if (o.kind === 'puppet') v = sp ? lv * 9 + 12 : main ? lv * 5 + 6 : 0;
+      if (o.kind === 'gov') v = sp ? lv * 4 + 6 : lv * 3 + 6;
+      if (o.kind === 'free') v = (sp ? 3 : 1.5) * info(o.target).val + (g.c[o.target].war ? 8 : 0);
+      if (o.kind === 'rep') v = 9;
+      if (o.kind === 'disarm') v = 6;
+      v = v / o.cost + Math.random() * 0.05;
+      if (v > bv) { bv = v; best = o; }
+    }
+    if (!best) return false;
+    confClaim(g, conf, k, best);
+    return true;
+  }
+  // one turn at the table; false when everybody has passed
+  function confStep(g, conf) {
+    const act = conf.winners.filter(x => !x.done).sort((a, b) => b.pts - a.pts)[0];
+    if (!act) return false;
+    if (!aiConfPick(g, conf, act.key)) act.done = true;
+    return true;
+  }
+  // computer turns until it is the player's turn (or the table is empty and the treaty is signed)
+  function runConf(g) {
+    const conf = g.conf; if (!conf) return;
+    for (let i = 0; i < 400; i++) {
+      const act = conf.winners.filter(x => !x.done).sort((a, b) => b.pts - a.pts)[0];
+      if (!act) { g.conf = null; applyConf(g, conf); return; }
+      if (act.key === playerKey(g)) { if (!confOptions(g, conf, act.key).some(o => o.ok)) { act.done = true; continue; } return; }
+      if (!aiConfPick(g, conf, act.key)) act.done = true;
+    }
+  }
+  // the player's demand (an option id like 'take:123' or 'puppet:LBY'); then the others take their turns
+  function confDemand(g, id) {
+    const conf = g.conf; if (!conf) return 'No conference';
+    const me = playerKey(g), o = confOptions(g, conf, me).find(x => x.id === id);
+    if (!o) return 'Not possible now';
+    if (!o.ok) return o.why;
+    confClaim(g, conf, me, o); runConf(g);
+    return g.conf ? `${o.name}.` : 'The treaty is signed.';
+  }
+  function confPass(g) { const conf = g.conf; if (!conf) return; const W = conf.winners.find(x => x.key === playerKey(g)); if (W) W.done = true; runConf(g); }
+  // test tools and computer games: the player's seat is played by the computer too
+  function confAuto(g) { const conf = g.conf; if (!conf) return; while (confStep(g, conf)); g.conf = null; applyConf(g, conf); }
+  function applyConf(g, conf) {
+    const L = conf.lose, parts = [], byTaker = {};
+    const lands = loserLands(g, conf);
+    for (const c of conf.claims) {
+      const by = c.by, name = info(by).name;
+      if (c.kind === 'take') {
+        const id = c.ids[0], land = holderOf(g, id); if (!lands.includes(land)) continue;
+        (byTaker[by] = byTaker[by] || []).push(id);
+        const old = g.cuts.find(x => x.land === land && x.taker === by);
+        if (old) old.ids.push(id); else g.cuts.push({ land, taker: by, ids: [id], year: g.year, occ: newOcc() });
+      }
+      if (c.kind === 'annex') { annex(g, by, L); applyNames(g); parts.push(`${name} annexes ${ORIGINAL_NAMES[L]}`); if (L === g.nation) overthrow(g, `${name} annexes your country at the peace table.`); }
+      if (c.kind === 'puppet' || c.kind === 'gov') {
+        const c2 = g.c[L]; c2.a = clamp(isHome(by) ? (by === 'USA' ? 75 : -75) : g.c[by].a, -100, 100); c2.stab = Math.max(1, c2.stab - 1);
+        takePower(g, L, isHome(by) ? (by === 'USA' ? 'con' : 'com') : (g.c[by].ruling === 'com' ? 'com' : 'nat'));
+        if (c.kind === 'puppet') { c2.puppetOf = by === g.nation ? by : null; c2.a = clamp(c2.a * 1.1, -100, 100); }
+        parts.push(c.kind === 'puppet' ? `${name} makes ${info(L).name} its puppet` : `${name} installs a new government in ${info(L).name}`);
+        if (L === g.nation) overthrow(g, `The peace treaty puts a government loyal to ${name} in power. You are out.`);
+      }
+      if (c.kind === 'free') {
+        const r = c.target;
+        if (g.c[r] && g.c[r].owner) { if (isUnionPart(g, r)) freeUnion(g, r, clamp(ownerAlign(g, by) * 0.5, -100, 100)); else liberate(g, r, `${info(r).name} is set free by the peace.`); parts.push(`${name} frees ${info(r).name}`); }
+      }
+      if (c.kind === 'rep') { reparations(g, by, L); parts.push(`${name} takes reparations`); }
+      if (c.kind === 'disarm') { if (g.c[L]) g.c[L].army *= 0.5; parts.push(`${name} disarms ${info(L).name}`); }
+    }
+    // a pocket of the loser that one taker now surrounds goes with it
+    for (const id of confPool(g, conf)) {
+      if (holderOf(g, id) !== L || (capOf(L) || {}).id === id) continue;
+      const around = new Set(Object.keys(PBY[id].nb).map(q => holderOf(g, +q)));
+      const t = around.size === 1 ? [...around][0] : null;
+      if (t && t !== L && byTaker[t]) { byTaker[t].push(id); const old = g.cuts.find(x => x.land === L && x.taker === t); if (old) old.ids.push(id); }
+    }
+    for (const t in byTaker) parts.unshift(`${info(t).name} takes ${provList(byTaker[t])}`);
+    syncBorders(g);
+    if (g.c[L] && !g.c[L].owner) { g.c[L].stab = Math.max(1, g.c[L].stab - 1); g.c[L].army = Math.min(g.c[L].army, 3); }
+    if (conf.win === g.nation) g.bonus.ME += 3;
+    if (isHome(conf.win)) g.bonus[conf.win === 'USA' ? 'US' : 'SU'] += 2;
+    g.treaties = g.treaties || [];
+    g.treaties.unshift({ year: g.year, name: `Peace of ${conf.town}`, text: parts.join('; ') || 'the winners demand nothing' });
+    g.treaties.length = Math.min(g.treaties.length, 30);
+    say(g, `Peace of ${conf.town}: ${parts.length ? parts.join('; ') : 'the winners demand nothing'}.`);
+  }
+  function confView(g) {
+    const conf = g.conf; if (!conf) return null;
+    const me = playerKey(g), act = conf.winners.filter(x => !x.done).sort((a, b) => b.pts - a.pts)[0];
+    return { name: `Peace of ${conf.town}`, lose: conf.lose, loser: info(conf.lose).name, war: `${info(conf.att).name} → ${info(conf.def).name}`,
+      winners: conf.winners.map(x => ({ key: x.key, name: info(x.key).name, pts: x.pts, done: x.done, me: x.key === me })),
+      claims: conf.claims.map(c => ({ by: c.by, byName: info(c.by).name, kind: c.kind, ids: c.ids, name: c.name, target: c.target })),
+      myTurn: !!act && act.key === me, options: confOptions(g, conf, me) };
   }
 
   // ================= formable nations =================
@@ -1183,7 +1356,7 @@
   // ================= the end of a year =================
   const armyPower = (g, key) => g.c[key].army * (isHome(key) ? 1 : 0.8 + g.c[key].stab * 0.08);
   function endYear(g) {
-    if (g.over || g.pending.length || g.peace) return;
+    if (g.over || g.pending.length || g.peace || g.conf) return;
     runCabinet(g);
     for (const side of ['US', 'SU']) if (side !== g.side) computerTurn(g, side);
     // ---- civil wars ----
@@ -1326,51 +1499,12 @@
     }
     returnLand(g, w[done], w[done === 'att' ? 'def' : 'att']);
     const win = w[done], lose = w[done === 'att' ? 'def' : 'att'];
-    if (done === 'def') {                                                 // the invasion fails: the attacker is weakened, nothing more
-      if (isHome(lose)) g.bonus[lose === 'USA' ? 'US' : 'SU'] -= 6; else { g.c[lose].stab = Math.max(1, g.c[lose].stab - 1); g.c[lose].army *= 0.7; }
-      if (win === g.nation) g.bonus.ME += 3;
-      // the defender makes the aggressor pay
-      if (!isHome(lose) && win !== g.nation) { reparations(g, win, lose); say(g, `${Dn} drives back the invasion from ${A}, and ${A} pays reparations.`); }
-      else say(g, `${Dn} drives back the invasion from ${A}.`);
-      return;
-    }
     if (isHome(lose)) {                                                   // a superpower is never occupied: it pulls back in defeat
       const p = lose === 'USA' ? 'US' : 'SU'; g.bonus[p] -= 6;
       say(g, `The ${NAME[p]} withdraws from ${info(win).name} in defeat.`); return;
     }
-    const L = g.c[lose];
-    if (win === playerKey(g) && !g.over) { g.peace = { win, lose }; say(g, `${info(lose).name} is defeated. Dictate the peace.`); return; }
-    // a war of conquest: the loser disappears into the winner
-    if (w.annexOnWin && done === 'att' && !isHome(lose)) {
-      annex(g, win, lose); applyNames(g);
-      say(g, `${info(win).name} conquers ${ORIGINAL_NAMES[lose]}. The country disappears from the map.`);
-      if (lose === g.nation) overthrow(g, `${info(win).name} conquers your country. It is now a province of the victor.`);
-      return;
-    }
-    // The computer's terms. A crushing win next door, over a smaller country, may end in annexation
-    // (a winner holds at most two conquests at a time); otherwise a friendly government, reparations,
-    // and if the win was big, disarmament.
-    const score = warScore(w, done);
-    const conquests = ownedBy(g, win).filter(k => !isUnionPart(g, k)).length;
-    if (!isHome(win) && borders(g, win, lose) && valueOf(g, lose) <= valueOf(g, win) && conquests < 2 && score >= 85 && Math.random() < 0.35) {
-      annex(g, win, lose); applyNames(g);
-      say(g, `${info(win).name} defeats ${ORIGINAL_NAMES[lose]} and annexes it. The country disappears from the map.`);
-      if (lose === g.nation) overthrow(g, `${info(win).name} annexes your country. It is now a province of the victor.`);
-      return;
-    }
-    L.a = clamp(isHome(win) ? (win === 'USA' ? 75 : -75) : g.c[win].a, -100, 100);
-    L.stab = Math.max(1, L.stab - 1);
-    takePower(g, lose, g.c[win].ruling === 'com' ? 'com' : 'nat');
-    if (win === g.nation) { L.puppetOf = g.nation; g.bonus.ME += 3; }
-    if (L.puppetOf && L.puppetOf !== win) L.puppetOf = null;
-    if (isHome(win)) g.bonus[win === 'USA' ? 'US' : 'SU'] += 2;
-    const terms = ['a friendly government'];
-    // a clear win next door also takes a block of border provinces
-    if (!isHome(win) && score >= 55 && borders(g, win, lose)) { const ids = cutLand(g, lose, win, score / 100); if (ids.length) terms.push(`the cession of ${provList(ids)}`); }
-    reparations(g, win, lose); terms.push('reparations');
-    if (score >= 70) { L.army *= 0.5; terms.push('disarmament'); }
-    say(g, `${info(win).name} defeats ${info(lose).name} and imposes ${terms.slice(0, -1).join(', ')} and ${terms[terms.length - 1]}.`);
-    if (lose === g.nation) overthrow(g, `${info(win).name}'s army takes your country. Your government is replaced.`);
+    if (done === 'def') { g.c[lose].stab = Math.max(1, g.c[lose].stab - 1); say(g, `${Dn} throws back the invasion from ${A} and carries the war into ${A}.`); }
+    startConference(g, w, done);                                          // the winners dictate the peace
   }
   // the loser pays: its treasury (or its army, if it has none to speak of) goes to the winner
   function reparations(g, win, lose) {
@@ -1394,5 +1528,5 @@
     newGame, check, act, homeCheck, homeAct, warOf, warCheck, warHelp, makePeace, deployed, detente, endYear, choose,
     score, income, nationScore, nationIncome, friendsOf, puppetsOf, pactsOf, allied, blocOf, leaning, isHome, info, neighbours,
     borders, landsOf, capitalName, computerTurn, baseArmy, valueOf, PARTIES, PARTY, partyCheck, partyAct,
-    PUSH_CAP, isUnionPart, regionsOf, free, judge, finish, sovietWeak, POLICIES, TERR_ACTIONS, territories, territoryCheck, territoryAct, lostLand, takenLand, PROV, PBY, holderOf, provVal, provList, landBlock, cutLand, fixCuts, syncBorders, PEACE_TERMS, termsFor, peaceChance, proposePeace, conference, formCheck, form, ownedBy, stateOf, applyNames, playerKey, warScore };
+    PUSH_CAP, isUnionPart, regionsOf, free, judge, finish, sovietWeak, POLICIES, TERR_ACTIONS, territories, territoryCheck, territoryAct, lostLand, takenLand, PROV, PBY, holderOf, provVal, provList, landBlock, cutLand, fixCuts, syncBorders, PEACE_TERMS, termsFor, peaceChance, proposePeace, confView, confDemand, confPass, confAuto, startConference, formCheck, form, ownedBy, stateOf, applyNames, playerKey, warScore };
 })(typeof window !== 'undefined' ? window : globalThis);

@@ -65,6 +65,10 @@ if(location.hash.includes('states')){ const g=ironCurtain.game; g.wars=[]; g.c.G
   const add=(a,d,f,p)=>{g.wars.push({id:g.wars.length+1,att:a,def:d,front:f,prev:p,years:2,help:{att:0,def:0},troops:{},armed:{},capFell:{}})};
   add('ROU','SUN',40,20); add('HUN','YUG',45,25); add('IRL','GBR',35,15); add('CHN','SUN',30,10); ironCurtain.refresh(); }
 if(pick){ const p=[...document.querySelectorAll('path.land')].find(p=>p.__data__&&p.__data__.key===pick); if(p) p.dispatchEvent(new MouseEvent(location.hash.includes('dbl')?'dblclick':'click',{bubbles:true})); }
+if(location.hash.includes('confit')){ const g=ironCurtain.game, me=g.nation||'USA'; const foe=(location.hash.match(/foe=(\w+)/)||[])[1]||'LBY';
+  g.wars=[]; const w={id:99,att:me,def:foe,front:100,years:3,help:{att:0,def:0},troops:{SU:location.hash.includes('withsu')?'att':null},armed:{},capFell:{}};
+  GAME.startConference(g,w,'att'); ironCurtain.refresh(); ironCurtain.select(foe); ironCurtain.zoomTo(foe);
+  if(location.hash.includes('claim2')){ for(let k=0;k<2;k++){ const v=GAME.confView(g); const o=v.options.find(x=>x.kind==='take'&&x.ok); if(o) GAME.confDemand(g,o.id); } ironCurtain.refresh(); } }
 const zm=location.hash.match(/z=(\w+)/); if(zm) ironCurtain.zoomTo(zm[1]);
 const mm=location.hash.match(/mode=(\w+)/); if(mm) document.querySelector('[data-mode="'+mm[1]+'"]').click();
 if(location.hash.includes('mid')){ const t0=performance.now(); while(performance.now()-t0<800); d3.timerFlush(); }

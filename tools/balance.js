@@ -7,7 +7,7 @@ for (let i = 0; i < runs; i++) {
   while (!g.over && !g.verdict) {
     while (g.pending.length) GAME.choose(g, 0);
     GAME.computerTurn(g, 'US');
-    if (g.peace) GAME.conference(g, GAME.termsFor(g, g.peace.win, g.peace.lose).filter(t => t.ok && t.id === (g.nation ? 'annex' : 'government')).map(t => t.id));
+    if (g.conf) GAME.confAuto(g);
     for (const f of globalThis.DATA.FORMABLES) if (g.nation) GAME.form(g, f.id);
     GAME.endYear(g);
   }

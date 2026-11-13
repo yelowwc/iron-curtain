@@ -1,20 +1,26 @@
-// node tools/wars.js [games] - how wars between countries end
+// node tools/wars.js [games] - how wars between countries end, per game
+// (attacker wins and defender wins both go to a peace conference; truces keep the ceasefire line)
 require('../data.js'); require('../neighbours.js'); require('../game.js');
-const GAME = globalThis.GAME, runs = +process.argv[2] || 50, end = { attacker: 0, defender: 0, truce: 0 };
-let years = 0, n = 0;
+const GAME = globalThis.GAME, runs = +process.argv[2] || 50;
+const c = { attacker: 0, defender: 0, truce: 0, treaties: 0 };
 for (let i = 0; i < runs; i++) {
-  const g = GAME.newGame('US'); let seen = new Set();
+  const g = GAME.newGame('US');
   while (!g.over && !g.verdict) {
     while (g.pending.length) GAME.choose(g, 0);
+    if (g.conf) GAME.confAuto(g);
     GAME.computerTurn(g, 'US');
-    const before = g.wars.map(w => ({ id: w.id, y: g.year }));
-    if (g.peace) GAME.conference(g, GAME.termsFor(g, g.peace.win, g.peace.lose).filter(t => t.ok && t.id === (g.nation ? 'annex' : 'government')).map(t => t.id));
-    for (const f of globalThis.DATA.FORMABLES) if (g.nation) GAME.form(g, f.id);
+    const top = g.news[0];
     GAME.endYear(g);
-    for (const b of before) if (!g.wars.some(w => w.id === b.id)) {
-      const t = g.news.find(x => /defeats|drives back|truce\. Nobody/.test(x.text) && x.year >= b.y);
-      if (t) { end[/defeats/.test(t.text) ? 'attacker' : /drives back/.test(t.text) ? 'defender' : 'truce']++; }
+    let thrown = 0;
+    for (const x of g.news) {
+      if (x === top) break;
+      if (/throws back the invasion/.test(x.text)) thrown++;
+      if (/winners meet/.test(x.text)) c.treaties++;
+      if (/sign a truce/.test(x.text)) c.truce++;
     }
+    c.defender += thrown;
   }
 }
-console.log(`${runs} games, wars ended:`, end);
+c.attacker = c.treaties - c.defender;
+for (const k in c) c[k] = +(c[k] / runs).toFixed(1);
+console.log(`${runs} games, per game:`, c);

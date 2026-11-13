@@ -13,7 +13,7 @@ for (const key of keys) {
       if (me.stab < 3) GAME.homeAct(g, 'stabilise');
       if (me.army < GAME.baseArmy(key) + 4) GAME.homeAct(g, 'army');
       for (const n of (globalThis.NEIGHBOURS[key] || [])) { GAME.act(g, 'ME', 'aid', n); GAME.act(g, 'ME', 'propaganda', n); }
-      if (g.peace) GAME.conference(g, GAME.termsFor(g, g.peace.win, g.peace.lose).filter(t => t.ok && t.id === (g.nation ? 'annex' : 'government')).map(t => t.id));
+      if (g.conf) GAME.confAuto(g);
     for (const f of globalThis.DATA.FORMABLES) if (g.nation) GAME.form(g, f.id);
     GAME.endYear(g);
     }

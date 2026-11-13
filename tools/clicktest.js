@@ -78,12 +78,18 @@
     check('save: game continues', G().year === year && G().nation === 'POL' && q('#modal').hidden);
   });
   await step('peace conference', async () => {
-    const g = G(); g.peace = { win: 'POL', lose: 'CSK' }; ironCurtain.refresh();
-    click('#end'); await wait(100);
-    check('peace: conference opens', !!q('#sign') && /Peace conference/.test(q('#card').textContent));
-    const t = qa('[data-t]').find(b => !b.disabled && b.dataset.t === 'reparations'); if (t) click(t); await wait(20);
-    click('#sign'); await wait(100); await answer();
-    check('peace: treaty signed', !g.peace && g.news.some(n => /Peace between Poland and Czechoslovakia/.test(n.text)), (g.news.find(n => /Peace between/.test(n.text)) || {}).text);
+    const g = G(); g.wars = [];
+    GAME.startConference(g, { id: 98, att: 'POL', def: 'CSK', front: 100, years: 3, help: { att: 0, def: 0 }, troops: {}, armed: {}, capFell: {} }, 'att');
+    ironCurtain.refresh(); await wait(50);
+    check('peace: conference opens in the panel', !!g.conf && /Peace conference/.test(q('#panel').textContent) && q('#end').disabled);
+    const prov = qa('path.land.claimable')[0];
+    check('peace: provinces to click on the map', !!prov, qa('path.land.claimable').length + ' claimable');
+    if (prov) { prov.dispatchEvent(new MouseEvent('click', { bubbles: true })); await wait(50); }
+    check('peace: a province claimed', !g.conf || g.conf.claims.some(c => c.by === 'POL' && c.kind === 'take'));
+    const rep = q('[data-demand^="rep:"]'); if (rep && !rep.disabled) click(rep); await wait(50);
+    if (q('#confpass')) click('#confpass'); await wait(100); await answer();
+    check('peace: treaty signed', !g.conf && g.news.some(n => /^Peace of .*Poland takes/.test(n.text)), (g.news.find(n => /^Peace of/.test(n.text)) || {}).text);
+    check('peace: Poland holds new provinces', g.cuts.some(k => k.taker === 'POL' && ['CSK', 'SVK'].includes(k.land)));
   });
   await step('nation decisions', async () => {
     try { localStorage.removeItem('iron-curtain-lite-3'); } catch (e) { }
