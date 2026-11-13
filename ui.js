@@ -1,4 +1,4 @@
-// Iron Curtain Lite - the screen: map, side panel, pop-ups.
+// Iron Curtain - the screen: map, side panel, pop-ups.
 (function () {
   const D = window.DATA, GAME = window.GAME, NEIGHBOURS = window.NEIGHBOURS || {};
   const SAVE = 'iron-curtain-lite-3';
@@ -897,7 +897,7 @@
     const captives = D.COUNTRIES.filter(d => d.union && !d.indep);
     const regions = ['EU', 'ME', 'AS', 'AF', 'LA'];
     const lean = a => a >= 25 ? 'var(--us)' : a <= -25 ? 'var(--su)' : 'var(--neutral)';
-    modal(`<div class="kicker">1947 – 1991</div><h1>Iron Curtain Lite</h1>
+    modal(`<div class="kicker">1947 – 1991</div><h1>Iron Curtain</h1>
       <p>The Second World War is over and two superpowers divide the world. Lead one of them, or any nation caught in between.</p>
       <div class="sides">
         <button class="choice" data-side="US"><b style="color:#2f6bc4">Play the United States</b><span>Lead the West: democracy and dollars.</span></button>

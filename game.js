@@ -1,4 +1,4 @@
-// Iron Curtain Lite - the rules of the game. No drawing here, so it also runs in Node for testing.
+// Iron Curtain - the rules of the game. No drawing here, so it also runs in Node for testing.
 //
 // Who plays: the player is either a superpower ('US' or 'SU') or any other nation ('ME').
 // A superpower wins by having more countries in its bloc than the rival in 1991.
