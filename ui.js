@@ -858,6 +858,16 @@
       return;
     }
     if (g.peace) return conference();
+    const ov = GAME.offerView(g);
+    if (ov) {
+      modal(`<div class="kicker">${g.year} · Peace offer</div><h1>${esc(ov.from)} ${ov.youWin ? 'asks for peace' : 'offers peace on its terms'}</h1>
+        <p>${ov.youWin ? 'They are losing and offer:' : 'They are winning and demand:'}</p><ul>${ov.terms.map(t => `<li><b>${esc(t.name)}</b> <span class="sub">${esc(t.help)}</span></li>`).join('')}</ul>
+        <button class="choice" id="offer-yes"><b>Sign the peace</b><span>${ov.youWin ? 'Take what they offer.' : 'Give them what they want and end the war.'}</span></button>
+        <button class="choice" id="offer-no"><b>Keep fighting</b><span>Refuse. You can still offer your own terms.</span></button>`);
+      $('offer-yes').onclick = () => { toast(GAME.answerOffer(g, true)); refresh(); showEvents(); if (g.over) gameOver(); };
+      $('offer-no').onclick = () => { toast(GAME.answerOffer(g, false)); refresh(); showEvents(); };
+      return;
+    }
     const e = g.pending[0]; if (!e) return close();
     modal(`<div class="kicker">${g.year} · You decide</div><h1>${esc(e.title)}</h1><p>${esc(e.text)}</p>
       ${e.options.map((o, i) => `<button class="choice" data-i="${i}"><b>${esc(o.label)}</b><span>${esc(o.hint)}</span></button>`).join('')}`);

@@ -28,7 +28,7 @@
     check('start: superpower buttons', q('[data-side="US"]') && q('[data-side="SU"]'));
     const nats = qa('button.nat').map(b => b.dataset.side);
     check('start: nations listed', nats.length > 60, nats.length + ' nations');
-    check('start: union regions not playable', !nats.includes('UKR') && !nats.includes('SCO'));
+    check('start: nations inside unions playable', nats.includes('UKR') && nats.includes('SCO'));
     click('[data-side="POL"]'); await wait(100); await answer();
   });
   // ---- running your own nation ----

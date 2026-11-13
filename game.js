@@ -855,6 +855,38 @@
     if (win === g.nation) g.bonus.ME += 2;
     say(g, `Peace between ${info(win).name} and ${info(lose).name}${done.length ? ': ' + done.join(', ') : ' on the old borders'}.`);
   }
+  // the computer side of the player's war makes offers: a loser concedes, a winner demands
+  function makeOffer(g) {
+    const me = playerKey(g); g.offer = null;
+    const w = g.wars.find(x => x.att === me || x.def === me); if (!w || w.years < 2 || g.over || Math.random() < 0.5) return;
+    const mySide = w.att === me ? 'att' : 'def', score = warScore(w, mySide), enemy = w[mySide === 'att' ? 'def' : 'att'];
+    if (Math.abs(score) < 25) return;
+    const [win, lose] = score > 0 ? [me, enemy] : [enemy, me], budget = Math.abs(score) + w.years * 4;
+    const picks = [];
+    let spent = 0;
+    for (const t of termsFor(g, win, lose)) {
+      if (!t.ok || t.id === 'white' || t.id === 'annex' || (t.id === 'government' && score > 0)) continue;   // nobody offers its own annexation
+      if (spent + t.cost <= budget * (score > 0 ? 0.8 : 1)) { picks.push(t.id); spent += t.cost; }
+    }
+    if (!picks.length) return;
+    g.offer = { wid: w.id, from: enemy, win, lose, picks, year: g.year };
+  }
+  function answerOffer(g, yes) {
+    const o = g.offer; g.offer = null; if (!o) return '';
+    const w = g.wars.find(x => x.id === o.wid); if (!w) return 'That war is over.';
+    if (!yes) { say(g, `You turn down ${info(o.from).name}'s peace offer. The war goes on.`); return 'The war goes on.'; }
+    g.wars = g.wars.filter(x => x !== w);
+    applyTerms(g, o.win, o.lose, o.picks, Math.max(0.15, Math.abs(warScore(w, w.att === o.win ? 'att' : 'def')) / 100));
+    return 'Peace is signed.';
+  }
+  function offerView(g) {
+    const o = g.offer; if (!o) return null;
+    const terms = termsFor(g, o.win, o.lose);
+    const youWin = o.win === playerKey(g), F = info(o.from).name;
+    const say2 = t => youWin ? { name: t.id === 'land' ? t.name.replace(/^Take /, 'You get ') : t.id === 'reparations' ? `${F} pays reparations` : t.id === 'disarm' ? `${F} cuts its army in half` : t.name, help: t.help }
+      : { name: t.id === 'land' ? t.name.replace(/^Take /, 'You hand over ') : t.id === 'reparations' ? 'You pay reparations' : t.id === 'disarm' ? 'Your army is cut in half' : t.id === 'government' ? `A government loyal to ${F} takes over (you are out)` : t.name, help: '' };
+    return { from: F, youWin, terms: o.picks.map(id => terms.find(t => t.id === id)).filter(Boolean).map(say2) };
+  }
   // a won war: the player picks terms worth up to 100 points
   function conference(g, picks) {
     const P = g.peace; if (!P) return;
@@ -1225,6 +1257,7 @@
       endWar(g, w, done);
       if (g.over) return;
     }
+    makeOffer(g);
     // ---- rivals in opposite camps sometimes fight (unless the target has strong allies) ----
     if (g.wars.length < 3) for (const [x, y] of RIVALS) {
       const cx = g.c[x], cy = g.c[y];
@@ -1357,7 +1390,7 @@
   function finish(g) { if (!g.over) g.over = judge(g); }
 
   G.GAME = { ARM_COST, TROOPS_COST, UPKEEP, CAPITAL_AT, START, END, BLOC, NAME, HOME, SIDE, ACTIONS, HOME_ACTIONS, DETENTE_COST,
-    PROGRAMS, SPACE, programCheck, programAct, REBELS, FOCUS, setCabinet, UNION_ACTIONS, unionCheck, unionAct, captive: g => captive(g),
+    answerOffer, offerView, PROGRAMS, SPACE, programCheck, programAct, REBELS, FOCUS, setCabinet, UNION_ACTIONS, unionCheck, unionAct, captive: g => captive(g),
     newGame, check, act, homeCheck, homeAct, warOf, warCheck, warHelp, makePeace, deployed, detente, endYear, choose,
     score, income, nationScore, nationIncome, friendsOf, puppetsOf, pactsOf, allied, blocOf, leaning, isHome, info, neighbours,
     borders, landsOf, capitalName, computerTurn, baseArmy, valueOf, PARTIES, PARTY, partyCheck, partyAct,
