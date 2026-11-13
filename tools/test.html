@@ -39,8 +39,9 @@
 <script>window.NO_ANIM=location.hash.includes("still"); window.NO_WAIT=true;</script>
 <script src="../lib/d3.min.js"></script>
 <script src="../lib/topojson-client.min.js"></script>
-<script src="../lib/world.js"></script>
+<script src="../lib/provinces.js"></script>
 <script src="../data.js"></script>
+<script src="../provinces.js"></script>
 <script src="../neighbours.js"></script>
 <script src="../game.js"></script>
 <script src="../ui.js"></script>
@@ -51,9 +52,9 @@ for(let y=0;y<(+yrs||0);y++){ let n=0; if(q('#onward')&&!location.hash.includes(
 {let n=0; while(q('[data-i]')&&n++<9) q('[data-i]').click();}
 if(location.hash.includes('formit')){ const g=ironCurtain.game; for(const k of ['BEL','LUX']) g.c[k].a=g.c.NLD.a; g.ip.ME=30; GAME.form(g,'benelux');
   g.c.FRG.army=1; g.wars=[]; GAME.act(g,'ME','invade','FRG'); g.wars[0].front=99; g.wars[0].years=3; ironCurtain.refresh(); document.getElementById('end').click(); }
-if(location.hash.includes('cutit')){ const g=ironCurtain.game; g.cuts=[{land:'IRN',taker:'IRQ',depth:0.35,year:1950},{land:'KOR',taker:'PRK',depth:0.3,year:1950}]; ironCurtain.refresh(); }
+if(location.hash.includes('cutit')){ const g=ironCurtain.game; g.cuts=[]; GAME.cutLand(g,'IRN','IRQ',0.35); GAME.cutLand(g,'KOR','PRK',0.6); GAME.cutLand(g,'POL','SUN',0.5); GAME.cutLand(g,'IND','PAK',0.5); ironCurtain.refresh(); }
 if(location.hash.includes('occit')){ const g=ironCurtain.game; g.peace={win:'EGY',lose:'SAU'}; GAME.conference(g,['annex']); g.c.SAU.occ.unrest=72; g.c.SAU.occ.integ=30;
-  g.cuts.push({land:'ISR',taker:'EGY',depth:0.4,year:1948,occ:{unrest:20,integ:55,policy:'integrate',core:false,acted:0}}); ironCurtain.refresh(); }
+  GAME.cutLand(g,'ISR','EGY',0.6); if(g.cuts[0]) g.cuts[0].occ={unrest:20,integ:55,policy:'integrate',core:false,acted:0}; ironCurtain.refresh(); }
 if(location.hash.includes('stage')){ const g=ironCurtain.game; g.wars=[]; GAME.civilWar; 
   const add=(a,d,f,p)=>{g.wars.push({id:g.wars.length+1,att:a,def:d,front:f,prev:p,years:2,help:{att:0,def:0},troops:{},armed:{}})};
   add("IRQ","IRN",55,25); add("PAK","IND",35,15); add("ARG","GBR",40,20); add("SOM","ETH",-30,-55); ironCurtain.refresh(); }

@@ -11,49 +11,50 @@
   svg.append('defs').append('pattern').attr('id', 'colony').attr('width', 5).attr('height', 5).attr('patternUnits', 'userSpaceOnUse').attr('patternTransform', 'rotate(45)')
     .call(p => { p.append('rect').attr('width', 5).attr('height', 5).attr('fill', '#33372f'); p.append('rect').attr('width', 2.2).attr('height', 5).attr('fill', '#4a4d43'); });
 
-  // which game country each shape on the world map belongs to
-  const owner = {};
-  for (const c of D.COUNTRIES) { c.ids.forEach(id => owner['id' + id] = c.key); (c.names || []).forEach(n => owner['n' + n] = c.key); }
-  const geoms = WORLD.objects.countries.geometries.filter(x => x.id !== '010');          // no Antarctica
-  geoms.forEach(x => x.key = owner['id' + (+x.id)] || owner['n' + x.properties.name] || null);
-  const shapes = topojson.feature(WORLD, { type: 'GeometryCollection', geometries: geoms }).features;
-  shapes.forEach((f, i) => f.key = geoms[i].key);
-  // Hand-drawn lands (East Germany, South Vietnam, Scotland, Tibet...) are painted over the country they
-  // lie in, and cut to its real outline, so a rough ring only has to be right where it crosses the land.
-  const customs = D.COUNTRIES.filter(d => d.custom && D.RINGS[d.key]).map(d => {
-    const f = { type: 'Feature', key: d.key, clip: d.clip || null, custom: true, geometry: { type: 'Polygon', coordinates: [D.RINGS[d.key].slice()] } };
-    if (d3.geoArea(f) > 2 * Math.PI) f.geometry.coordinates[0].reverse();
-    return f;
-  });
-  const customOf = {}; customs.forEach(f => customOf[f.key] = f);
-  const parentOf = k => customOf[k] ? customOf[k].clip || D.BY_KEY[k].union || null : null;      // the land it is painted over
-  const childrenOf = k => customs.filter(f => parentOf(f.key) === k).map(f => f.key);
+  // The map is drawn from provinces (lib/provinces.js). Every land, hand-drawn ones like East Germany
+  // included, is a set of real provinces; x.key is who holds the province right now (a treaty or a
+  // truce can hand provinces over), x.home the country it belongs to.
+  const PT = window.PROVTOPO;
+  const geoms = PT.objects.provinces.geometries;
+  geoms.forEach(x => { x.pid = +x.id; x.home = D.BY_KEY[x.properties.key] ? x.properties.key : null; x.key = x.home; });
+  const shapes = topojson.feature(PT, PT.objects.provinces).features;
+  shapes.forEach((f, i) => { f.pid = geoms[i].pid; f.home = geoms[i].home; f.key = f.home; });
+  const customs = [], customOf = {};
+  const parentOf = () => null, childrenOf = () => [];
   const geomsOf = k => geoms.filter(x => x.key === k);
-
   const proj = d3.geoNaturalEarth1().fitExtent([[8, 8], [W - 8, H - 8]], { type: 'FeatureCollection', features: shapes });
   const path = d3.geoPath(proj);
   const defs0 = svg.select('defs');
-  for (const k of new Set(customs.map(f => f.clip).filter(Boolean))) defs0.append('clipPath').attr('id', 'pclip-' + k).append('path').attr('d', path(topojson.merge(WORLD, geomsOf(k))));
-  const clipUrl = k => customOf[k] && customOf[k].clip ? `url(#pclip-${customOf[k].clip})` : null;
+  const clipUrl = () => null;
   root.append('path').datum({ type: 'Sphere' }).attr('fill', 'var(--sea)').attr('d', path);
-  const lands = root.append('g').selectAll('path').data([...shapes, ...customs]).join('path')
-    .attr('class', f => 'land' + (f.key ? ' click' : '')).attr('d', path).attr('fill', '#2a2e2c').attr('clip-path', f => f.custom ? clipUrl(f.key) : null)
+  const lands = root.append('g').selectAll('path').data(shapes).join('path')
+    .attr('class', f => 'land' + (f.home ? ' click' : '')).attr('d', path).attr('fill', '#2a2e2c')
     .on('mousemove', (e, f) => hover(e, f)).on('mouseleave', () => hover())
     .on('click', (e, f) => { if (f.key) select(GAME.stateOf(g, f.key)); })
     .on('dblclick', (e, f) => { if (f.key) selectRegion(f.key); });                 // double click: that region
-  // borders between states (a region inside its country has none), and coasts
-  const sameCountry = (a, b) => a.key && a.key === b.key;
-  root.append('path').attr('class', 'coast').attr('d', path(topojson.mesh(WORLD, { type: 'GeometryCollection', geometries: geoms }, (a, b) => a === b)));
+  // who holds each province: follows the cuts; every outline cache is thrown away when it changes
+  let holdSig = '';
+  function syncHolders() {
+    const sig = g ? (g.cuts || []).map(k => k.land + k.taker + (k.ids || []).join('.')).join(',') : '';
+    if (sig === holdSig) return; holdSig = sig;
+    for (let i = 0; i < geoms.length; i++) { const k = g ? GAME.holderOf(g, geoms[i].pid) : geoms[i].home; geoms[i].key = k; shapes[i].key = k; }
+    for (const c of [outline, stateCache, landsCache, regionCache, fieldCache]) for (const k in c) delete c[k];
+    borderKey = null;
+  }
+  // borders between states (a region inside its country has none), coasts, and faint province lines
+  const O = PT.objects.provinces;
+  root.append('path').attr('class', 'coast').attr('d', path(topojson.mesh(PT, O, (a, b) => a === b)));
+  const provPath = root.append('path').attr('class', 'provline');
   const borderPath = root.append('path').attr('class', 'border');
-  const customBorders = root.append('g').selectAll('path').data(customs).join('path').attr('class', 'border').attr('clip-path', f => clipUrl(f.key));
   let borderKey = null;
   // borders between states: annexed land shares its owner's state, so the line between them goes
   function drawBorders() {
+    syncHolders();
     const st = k => (g && k ? GAME.stateOf(g, k) : k);
-    const key = g ? D.COUNTRIES.map(d => g.c[d.key].owner || '').join(',') : '';
+    const key = (g ? D.COUNTRIES.map(d => g.c[d.key].owner || '').join(',') : '') + '|' + holdSig;
     if (key === borderKey) return; borderKey = key;
-    borderPath.attr('d', path(topojson.mesh(WORLD, { type: 'GeometryCollection', geometries: geoms }, (a, b) => a !== b && !sameCountry(a, b) && !(a.key && b.key && st(a.key) === st(b.key)))));
-    customBorders.attr('d', f => !g || st(f.key) !== st(parentOf(f.key)) ? path(f) : null);
+    borderPath.attr('d', path(topojson.mesh(PT, O, (a, b) => a !== b && st(a.key) !== st(b.key))));
+    provPath.attr('d', path(topojson.mesh(PT, O, (a, b) => a !== b && a.key && a.key === b.key)));
   }
   drawBorders();
   const hoverLine = root.append('path').attr('class', 'hover'), selLine = root.append('path').attr('class', 'selected');
@@ -65,103 +66,23 @@
   const fronts = root.append('g'), arrows = root.append('g');
   const wars = root.append('g'), towns = root.append('g'), capitals = root.append('g'), labels = root.append('g'), cityLabels = root.append('g');
 
-  // A state's outline: its own land and annexed land, minus land lost in wars, plus land taken.
-  // With no war changes this is the exact vector outline; otherwise it is traced from a drawing.
-  const stateCache = {};
-  // land taken in a treaty never includes the capital
-  function cutDepth(c) {
-    const f = frontField(c.land, c.taker), cap = D.CAPITALS.find(x => x.key === c.land);
-    if (!f || !cap) return c.depth;
-    return Math.min(c.depth, f.depthAt(proj([cap.lon, cap.lat])) * 0.8);
-  }
-  // draw one land on a canvas: a hand-drawn land only inside its parent's outline
-  function paintLand(ctx, key, colour) {
-    ctx.save(); ctx.fillStyle = colour;
-    if (customOf[key] && customOf[key].clip) ctx.clip(new Path2D(outlineOf(customOf[key].clip)));
-    ctx.fill(new Path2D(outlineOf(key))); ctx.restore();
-  }
-  const boundsOf = key => {
-    const b = path.bounds(customOf[key] || topojson.merge(WORLD, geomsOf(key)));
-    if (customOf[key] && customOf[key].clip) {                      // a ring may reach far into the sea: keep to the parent's box
-      const p = path.bounds(topojson.merge(WORLD, geomsOf(customOf[key].clip)));
-      return [[Math.max(b[0][0], p[0][0]), Math.max(b[0][1], p[0][1])], [Math.min(b[1][0], p[1][0]), Math.min(b[1][1], p[1][1])]];
-    }
-    return b;
-  };
+  // outlines are merged from the provinces each state or land holds right now
+  const stateCache = {}, landsCache = {}, regionCache = {}, outline = {};
+  const mergeD = gs => gs.length ? path(topojson.merge(PT, gs)) || '' : '';
+  function paintLand(ctx, key, colour) { ctx.save(); ctx.fillStyle = colour; ctx.fill(new Path2D(outlineOf(key))); ctx.restore(); }
+  const boundsOf = key => path.bounds(topojson.merge(PT, geomsOf(key)));
   function stateOutline(key) {
     if (!g || !key || !g.c[key]) return outlineOf(key);
-    const members = [key, ...GAME.ownedBy(g, key)];
-    const inState = k => GAME.stateOf(g, k) === key;
-    const lost = (g.cuts || []).filter(c => members.includes(c.land) && !inState(c.taker));
-    const taken = (g.cuts || []).filter(c => inState(c.taker) && !inState(c.land));
-    // hand-drawn lands: the ones held by others are holes, the ones held away from their parent are drawn on their own
-    const holes = members.flatMap(childrenOf).filter(k => !inState(k));
-    const loose = members.filter(k => customOf[k] && !inState(parentOf(k)));
-    const plain = members.filter(k => !customOf[k]);
-    const sig = members.join(',') + '|' + holes.join(',') + '|' + [...lost, ...taken].map(c => c.land + c.taker + c.depth.toFixed(3)).join(',');
+    syncHolders();
+    const sig = D.COUNTRIES.map(d => g.c[d.key].owner || '').join(',');
     if (stateCache[key] && stateCache[key].sig === sig) return stateCache[key].d;
-    let d = [...plain, ...loose].map(outlineOf).join('');
-    const simple = !lost.length && !taken.length && !holes.length && loose.every(k => !customOf[k].clip) && (plain.length || loose.length === 1);
-    if (!simple) {
-      // anything harder is painted on a canvas and traced back into a line
-      const boxes = [...plain, ...loose, ...taken.map(c => c.land)].map(boundsOf);
-      const x0 = Math.min(...boxes.map(b => b[0][0])) - 2, y0 = Math.min(...boxes.map(b => b[0][1])) - 2;
-      const x1 = Math.max(...boxes.map(b => b[1][0])) + 2, y1 = Math.max(...boxes.map(b => b[1][1])) + 2;
-      const sc = Math.min(12, 900 / Math.max(x1 - x0, y1 - y0)), cw = Math.ceil((x1 - x0) * sc), ch = Math.ceil((y1 - y0) * sc);
-      const cv = document.createElement('canvas'); cv.width = cw; cv.height = ch;
-      const ctx = cv.getContext('2d');
-      ctx.setTransform(sc, 0, 0, sc, -x0 * sc, -y0 * sc);
-      for (const k of [...plain, ...loose]) paintLand(ctx, k, '#fff');
-      for (const k of holes) paintLand(ctx, k, '#000');
-      for (const c of lost) { const f = frontField(c.land, c.taker); if (!f) continue; ctx.save(); ctx.clip(new Path2D(outlineOf(c.land))); ctx.fillStyle = '#000'; ctx.fill(new Path2D(f.at(cutDepth(c)).d)); ctx.restore(); }
-      for (const c of taken) { const f = frontField(c.land, c.taker); if (!f) continue; ctx.save(); ctx.clip(new Path2D(outlineOf(c.land))); ctx.fillStyle = '#fff'; ctx.fill(new Path2D(f.at(cutDepth(c)).d)); ctx.restore(); }
-      const px = ctx.getImageData(0, 0, cw, ch).data, vals = new Float64Array(cw * ch);
-      for (let i = 0; i < vals.length; i++) vals[i] = px[i * 4] / 255;
-      const cont = d3.contours().size([cw, ch]).thresholds([0.5])(vals)[0];
-      d = cont.coordinates.flatMap(poly => poly.map(r => 'M' + r.map(q => (x0 + q[0] / sc).toFixed(2) + ',' + (y0 + q[1] / sc).toFixed(2)).join('L') + 'Z')).join('');
-    }
+    const d = mergeD(geoms.filter(x => x.key && GAME.stateOf(g, x.key) === key));
     stateCache[key] = { sig, d };
     return d;
   }
-  // the exact outline of a set of lands (a state's lands at war): hand-drawn ones cut to their parent, lands carved out of them removed
-  const landsCache = {};
-  function landsOutline(keys) {
-    const id = keys.join('+'); if (landsCache[id] !== undefined) return landsCache[id];
-    const plain = plainOf(keys), loose = looseOf(keys), holes = holesOf(keys);
-    if (!holes.length && loose.every(k => !customOf[k].clip)) return (landsCache[id] = [...plain, ...loose].map(outlineOf).join(''));
-    const boxes = [...plain, ...loose].map(boundsOf);
-    const x0 = Math.min(...boxes.map(b => b[0][0])) - 2, y0 = Math.min(...boxes.map(b => b[0][1])) - 2, x1 = Math.max(...boxes.map(b => b[1][0])) + 2, y1 = Math.max(...boxes.map(b => b[1][1])) + 2;
-    const sc = Math.min(12, 900 / Math.max(x1 - x0, y1 - y0)), cw = Math.ceil((x1 - x0) * sc), ch = Math.ceil((y1 - y0) * sc);
-    const cv = document.createElement('canvas'); cv.width = cw; cv.height = ch; const ctx = cv.getContext('2d');
-    ctx.setTransform(sc, 0, 0, sc, -x0 * sc, -y0 * sc);
-    for (const k of [...plain, ...loose]) paintLand(ctx, k, '#fff');
-    for (const k of holes) paintLand(ctx, k, '#000');
-    const px = ctx.getImageData(0, 0, cw, ch).data, vals = new Float64Array(cw * ch);
-    for (let i = 0; i < vals.length; i++) vals[i] = px[i * 4] / 255;
-    const cont = d3.contours().size([cw, ch]).thresholds([0.5])(vals)[0];
-    return (landsCache[id] = cont.coordinates.flatMap(poly => poly.map(r => 'M' + r.map(q => (x0 + q[0] / sc).toFixed(2) + ',' + (y0 + q[1] / sc).toFixed(2)).join('L') + 'Z')).join(''));
-  }
-  // a single region's outline (a hand-drawn one is the raw ring: clip it with clipUrl when drawing)
-  const outline = {};
-  function outlineOf(key) {
-    if (outline[key] !== undefined) return outline[key];
-    const parts = geomsOf(key);
-    return (outline[key] = customOf[key] ? path(customOf[key]) : parts.length ? path(topojson.merge(WORLD, parts)) : '');
-  }
-  // the exact outline of one region on its own (hand-drawn ones cut to their parent, carved-out lands removed)
-  const regionCache = {};
-  function regionOutline(key) {
-    if (regionCache[key] !== undefined) return regionCache[key];
-    if (!(customOf[key] && customOf[key].clip) && !childrenOf(key).length) return (regionCache[key] = outlineOf(key));
-    const [[x0, y0], [x1, y1]] = boundsOf(key), sc = Math.min(12, 900 / Math.max(x1 - x0 + 4, y1 - y0 + 4));
-    const cw = Math.ceil((x1 - x0 + 4) * sc), ch = Math.ceil((y1 - y0 + 4) * sc), cv = document.createElement('canvas'); cv.width = cw; cv.height = ch;
-    const ctx = cv.getContext('2d'); ctx.setTransform(sc, 0, 0, sc, -(x0 - 2) * sc, -(y0 - 2) * sc);
-    paintLand(ctx, key, '#fff'); for (const k of childrenOf(key)) paintLand(ctx, k, '#000');
-    const px = ctx.getImageData(0, 0, cw, ch).data, vals = new Float64Array(cw * ch);
-    for (let i = 0; i < vals.length; i++) vals[i] = px[i * 4] / 255;
-    const cont = d3.contours().size([cw, ch]).thresholds([0.5])(vals)[0];
-    return (regionCache[key] = cont.coordinates.flatMap(poly => poly.map(r => 'M' + r.map(q => (x0 - 2 + q[0] / sc).toFixed(2) + ',' + (y0 - 2 + q[1] / sc).toFixed(2)).join('L') + 'Z')).join(''));
-  }
+  function landsOutline(keys) { const id = keys.join('+'); return landsCache[id] !== undefined ? landsCache[id] : (landsCache[id] = mergeD(geoms.filter(x => keys.includes(x.key)))); }
+  function outlineOf(key) { return outline[key] !== undefined ? outline[key] : (outline[key] = mergeD(geomsOf(key))); }
+  const regionOutline = outlineOf;
   // ---- war fronts ----
   // For a war, every point of the land gets its distance from where the attack comes from: the border with
   // the attacker (or the nearest coast, for a war over the sea). The front at depth t is where that distance
@@ -171,39 +92,9 @@
   // the border between a land and a set of attacking lands, as screen polylines.
   // A hand-drawn land meets its parent along its own ring, and its parent's neighbours along the parent's real border.
   function sharedBorder(land, takers) {
-    const T = new Set(takers), lines = [];
-    const L = new Set([customOf[land] ? parentOf(land) : land]);
-    for (const k of takers) if (customOf[k] && parentOf(k) && !T.has(parentOf(k)) && parentOf(k) !== land) T.add(parentOf(k));
-    const ringOf = k => customOf[k] ? customOf[k] : null;
-    const inside = (pt, k) => !ringOf(k) || d3.geoContains(ringOf(k), pt);
-    // the real border, kept to the stretch that belongs to the hand-drawn lands on each side
-    const mesh = topojson.mesh(WORLD, WORLD.objects.countries, (a, b) => a !== b && ((L.has(a.key) && T.has(b.key)) || (T.has(a.key) && L.has(b.key))));
-    const takerRings = takers.filter(k => customOf[k] && parentOf(k) !== land);
-    for (const ln of mesh.coordinates) {
-      let cur = [];
-      for (const pt of ln) {
-        const ok = inside(pt, land) && (!takerRings.length || takers.some(k => !customOf[k]) || takerRings.some(k => inside(pt, k)));
-        if (ok) cur.push(proj(pt)); else { if (cur.length > 1) lines.push(cur); cur = []; }
-      }
-      if (cur.length > 1) lines.push(cur);
-    }
-    // the hand-drawn line between a region and the land it was carved from (the 17th parallel, the inner German border)
-    const pairs = [];
-    if (customOf[land] && takers.includes(parentOf(land))) pairs.push(land);
-    for (const k of takers) if (customOf[k] && parentOf(k) === land) pairs.push(k);
-    for (const k of pairs) {
-      const parent = topojson.merge(WORLD, geomsOf(parentOf(k))), ring = customOf[k].geometry.coordinates[0];
-      let cur = [];
-      for (let i = 0; i < ring.length - 1; i++) {
-        const [ax, ay] = ring[i], [bx, by] = ring[i + 1], n = Math.max(1, Math.ceil(Math.hypot(bx - ax, by - ay) / 0.15));
-        for (let j = 0; j < n; j++) {
-          const pt = [ax + (bx - ax) * j / n, ay + (by - ay) * j / n];
-          if (d3.geoContains(parent, pt)) cur.push(proj(pt)); else { if (cur.length > 1) lines.push(cur); cur = []; }
-        }
-      }
-      if (cur.length > 1) lines.push(cur);
-    }
-    return lines;
+    const T = new Set(takers);
+    const mesh = topojson.mesh(PT, O, (a, b) => a !== b && ((a.key === land && T.has(b.key)) || (T.has(a.key) && b.key === land)));
+    return mesh.coordinates.map(ln => ln.map(pt => proj(pt))).filter(l => l.length > 1);
   }
   // the lands a front covers: one region (a cut, a civil war) or a whole state (its own land, its regions, what it annexed)
   const looseOf = keys => keys.filter(k => customOf[k] && !keys.includes(parentOf(k)));
@@ -218,7 +109,7 @@
     const raw = taker ? keys.flatMap(k => sharedBorder(k, takers)) : [];
     const polys = [];
     const plain = plainOf(keys);
-    if (plain.length) { const m0 = topojson.merge(WORLD, plain.flatMap(geomsOf)); polys.push(...(m0.type === 'Polygon' ? [m0.coordinates] : m0.coordinates)); }
+    if (plain.length) { const m0 = topojson.merge(PT, plain.flatMap(geomsOf)); polys.push(...(m0.type === 'Polygon' ? [m0.coordinates] : m0.coordinates)); }
     for (const k of looseOf(keys)) polys.push(customOf[k].geometry.coordinates);
     const pb = polys.map(p => path.bounds({ type: 'Polygon', coordinates: p }));
     const inBox = (b, q, e) => q[0] >= b[0][0] - e && q[0] <= b[1][0] + e && q[1] >= b[0][1] - e && q[1] <= b[1][1] + e;
@@ -457,7 +348,7 @@
     // wars between countries: the winning side holds a band of the other's land along their border
     const W2 = g.wars.filter(w => center[w.att] && center[w.def]);
     // land taken in earlier wars: a real border, drawn first so wars go on top
-    const zones = (g.cuts || []).filter(k => center[k.taker] && center[k.land]).map(k => ({ id: 'k' + k.land + k.taker, taker: k.taker, land: k.land, state: k.land, depth: cutDepth(k), fill: colour(k.taker), cut: true }));
+    const zones = [];                                   // land taken in earlier wars is simply drawn as its new holder's provinces
     for (const w of W2) {
       const taker = w.front >= 0 ? w.att : w.def, state = w.front >= 0 ? w.def : w.att;
       // the fighting spreads over all the losing side's lands: its own, its regions, what it annexed (never a superpower's heartland)
@@ -613,12 +504,15 @@
   function hover(e, f) {
     const tip = $('tip');
     if (!e || !f || !f.key || !g) { tip.hidden = true; hoverLine.attr('d', null); return; }
-    const region = f.key; f = { key: GAME.stateOf(g, f.key) };                    // show the whole state; name the region if it differs
+    const region = f.key, P = GAME.PBY[f.pid], home = f.home;
+    const cut = home !== region ? (g.cuts || []).find(k => k.land === home && (k.ids || []).includes(f.pid)) : null;
+    const provLine = P ? `<br><span class="prov">${esc(P.name)}${P.cap && home === region ? ' ★' : ''}</span>${cut ? `<br><span class="dim">Taken from ${esc(GAME.info(home).name)} in ${cut.year}</span>` : ''}` : '';
+    f = { key: GAME.stateOf(g, f.key) };                    // show the whole state; name the region if it differs
     hoverLine.attr('d', stateOutline(f.key));
     const d = GAME.info(f.key), c = g.c[f.key];
     const ps = GAME.pactsOf(g, f.key).map(p => p.name).join(', ');
-    tip.innerHTML = `<b>${esc(d.name)}${f.key === g.nation ? ' (you)' : ''}</b><br>${c.owner ? 'Part of ' + esc(GAME.info(c.owner).name) + (c.owner === g.nation ? ' (yours)' : '') : GAME.isHome(f.key) ? 'Superpower' : !c.independent ? 'Colony of ' + esc(d.colony) + ' until ' + d.indep : GAME.leaning(c.a) + (c.war ? ' · ⚔ civil war' : '')}
-      ${c.independent || GAME.isHome(f.key) ? `<br>Army ${Math.round(c.army)}` : ''}${ps ? '<br>' + esc(ps) : ''}${GAME.warOf(g, f.key) ? '<br>⚔ at war' : ''}${GAME.lostLand(g, f.key).map(k => '<br>Lost land to ' + esc(GAME.info(k.taker).name)).join('')}${region !== f.key ? '<br><i>Region: ' + esc(GAME.info(region).name) + (g.c[region].occ && !g.c[region].occ.core ? ' · unrest ' + Math.round(g.c[region].occ.unrest) : '') + '</i>' : ''}<br><span class="dim">Double-click: this region</span>`;
+    tip.innerHTML = `<b>${esc(d.name)}${f.key === g.nation ? ' (you)' : ''}</b>${provLine}<br>${c.owner ? 'Part of ' + esc(GAME.info(c.owner).name) + (c.owner === g.nation ? ' (yours)' : '') : GAME.isHome(f.key) ? 'Superpower' : !c.independent ? 'Colony of ' + esc(d.colony) + ' until ' + d.indep : GAME.leaning(c.a) + (c.war ? ' · ⚔ civil war' : '')}
+      ${c.independent || GAME.isHome(f.key) ? `<br>Army ${Math.round(c.army)}` : ''}${ps ? '<br>' + esc(ps) : ''}${GAME.warOf(g, f.key) ? '<br>⚔ at war' : ''}${GAME.lostLand(g, f.key).map(k => '<br>Lost ' + esc(GAME.provList(k.ids || [])) + ' to ' + esc(GAME.info(k.taker).name)).join('')}${region !== f.key ? '<br><i>Region: ' + esc(GAME.info(region).name) + (g.c[region].occ && !g.c[region].occ.core ? ' · unrest ' + Math.round(g.c[region].occ.unrest) : '') + '</i>' : ''}<br><span class="dim">Double-click: this region</span>`;
     tip.hidden = false;
     const r = $('mapbox').getBoundingClientRect();
     tip.style.left = Math.min(e.clientX - r.left + 14, r.width - 200) + 'px'; tip.style.top = (e.clientY - r.top + 14) + 'px';
@@ -803,7 +697,7 @@
       <div class="fact"><small>Your moves here</small>${c.moves}/2 this year</div>
       <div class="fact"><small>${g.nation ? 'Towards you' : 'Status'}</small>${g.nation ? (GAME.friendsOf(g).some(f => f.key === sel) ? 'A friend' : Math.round(Math.abs(c.a - g.c[g.nation].a)) + ' apart') : c.puppetOf ? 'Defeated' : 'Free'}</div></div>
       ${g.nation ? GAME.territories(g).filter(t => t.kind === 'cut' && t.land === sel).map(terrCard).join('') : ''}
-      ${alliancesLine(sel)}${GAME.lostLand(g, sel).map(k => `<div class="sub" style="color:#f0a03c">Lost land to ${esc(GAME.info(k.taker).name)} in ${k.year}.</div>`).join('')}${partiesHtml(sel)}`;
+      ${alliancesLine(sel)}${GAME.lostLand(g, sel).map(k => `<div class="sub" style="color:#f0a03c">Lost ${esc(GAME.provList(k.ids || []))} to ${esc(GAME.info(k.taker).name)} in ${k.year}.</div>`).join('')}${partiesHtml(sel)}`;
     if (c.war) h += civilBox(c);
     const sw = GAME.warOf(g, sel); if (sw) h += warBox(sw);
     h += `<h3>Your moves</h3>`;
@@ -931,7 +825,7 @@
     if ($('resume')) $('resume').onclick = () => { g = rebuild(saved); sel = null; close(); refresh(); showEvents(); };
   }
   // saved games lose their functions (event options), so pending events are looked up again
-  function rebuild(s) { GAME.applyNames(s); s.pending = (s.pending || []).map(p => D.EVENTS.find(e => e.title === p.title)).filter(Boolean); return s; }
+  function rebuild(s) { GAME.applyNames(s); GAME.fixCuts(s); s.pending = (s.pending || []).map(p => D.EVENTS.find(e => e.title === p.title)).filter(Boolean); return s; }
   function save() { try { if (g && !g.over) localStorage.setItem(SAVE, JSON.stringify(g)); } catch (e) { } }
 
   let toastTimer = 0;

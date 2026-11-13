@@ -4,6 +4,7 @@
 // A superpower wins by having more countries in its bloc than the rival in 1991.
 // A nation tries to survive and grow: a bigger army, more friends, defeated enemies.
 (function (G) {
+  if (!G.CWPROV && typeof require === 'function') try { require('./provinces.js'); } catch (e) { }
   const D = G.DATA, NB = G.NEIGHBOURS || {};
   const START = 1947, END = 1991;
   const SIDE = { US: 1, SU: -1 };                 // +alignment is American, -alignment is Soviet
@@ -53,11 +54,11 @@
   const rand = (lo, hi) => lo + Math.random() * (hi - lo);
   const info = key => D.BY_KEY[key];
   const isHome = key => info(key).region === 'HOME';
-  const neighbours = (a, b) => (NB[a] || []).includes(b);
+  const neighbours = (a, b) => (NB[a] || []).includes(b) || DYN.has(a + '|' + b);
   // do a's lands (itself and what it annexed) border b?
   // do the lands of state a (itself, its regions, what it annexed) border the lands of state b?
   const landsOf = (g, key) => [key, ...ownedBy(g, key)];
-  const borders = (g, a, b) => { const B = landsOf(g, stateOf(g, b)); return landsOf(g, stateOf(g, a)).some(k => B.some(j => neighbours(k, j))); };
+  const borders = (g, a, b) => { syncBorders(g); const B = landsOf(g, stateOf(g, b)); return landsOf(g, stateOf(g, a)).some(k => B.some(j => neighbours(k, j))); };
   const baseArmy = (key, g) => isHome(key) ? (key === 'USA' ? 30 : 40) : valueOf(g, key) * 3 + info(key).stab;
   // a country's worth: its starting value, plus what the player has developed, plus its lands
   // (its own regions - Scotland for Britain, Ukraine for the USSR - count a little; conquered countries in full)
@@ -65,7 +66,7 @@
     if (!g || !g.c[key]) return info(key).val;
     const share = (k, o) => isUnionPart(g, k) ? 0.3 : o && o.policy === 'autonomy' ? 0.5 : 1;
     let v = info(key).val + (g.c[key].dev || 0) + ownedBy(g, key).reduce((t, k) => t + info(k).val * share(k, g.c[k].occ), 0);
-    for (const k of g.cuts || []) { if (k.taker === key) v += info(k.land).val * k.depth * share(k.occ); if (k.land === key) v -= info(k.land).val * k.depth; }
+    for (const k of g.cuts || []) { const kv = blockVal(k.ids || []); if (k.taker === key) v += kv * share(k.occ); if (k.land === key) v -= kv; }
     return Math.max(1, Math.round(v));
   }
   const ownedBy = (g, key) => D.COUNTRIES.filter(d => g.c[d.key] && g.c[d.key].owner === key).map(d => d.key);
@@ -74,6 +75,85 @@
   const isUnionPart = (g, key) => !!(g.c[key] && g.c[key].owner && info(key).union === g.c[key].owner);
   const regionsOf = (g, key) => D.COUNTRIES.filter(d => d.union === key && g.c[d.key].owner === key).map(d => d.key);
   const free = (g, key) => !!(g.c[key] && g.c[key].independent && !g.c[key].owner);
+
+  // ================= provinces =================
+  // Every land is cut into real provinces (provinces.js, built by tools/build_provinces.sh). A war's
+  // front still rolls smoothly over the whole country; provinces matter when land changes hands:
+  // a cut (g.cuts) is a list of provinces of `land` that `taker` now holds.
+  const PROV = G.CWPROV || [], PBY = {}, PROVS_OF = {};
+  for (const p of PROV) { PBY[p.id] = p; (PROVS_OF[p.key] = PROVS_OF[p.key] || []).push(p.id); }
+  // a province's share of its country's value: half by area, half spread evenly; the capital counts double
+  const PW = {};
+  for (const k in PROVS_OF) {
+    const ids = PROVS_OF[k], area = ids.reduce((t, i) => t + PBY[i].km2, 0) || 1;
+    const raw = ids.map(i => (0.5 * PBY[i].km2 / area + 0.5 / ids.length) * (PBY[i].cap ? 2 : 1)), tot = raw.reduce((a, b) => a + b, 0);
+    ids.forEach((i, n) => PW[i] = raw[n] / tot);
+  }
+  const provVal = id => (isHome(PBY[id].key) ? 10 : info(PBY[id].key).val) * PW[id];
+  const blockVal = ids => ids.reduce((t, i) => t + provVal(i), 0);
+  const cutsOf = g => (g && g.cuts) || [];
+  function holderOf(g, id) { for (const k of cutsOf(g)) if (k.ids && k.ids.includes(id)) return k.taker; return PBY[id].key; }
+  const provsHeldBy = (g, key) => PROV.filter(p => holderOf(g, p.id) === key).map(p => p.id);
+  const provList = ids => { const n = ids.map(i => PBY[i].name); return n.length <= 3 ? n.join(', ').replace(/, ([^,]*)$/, ' and $1') : `${n.slice(0, 2).join(', ')} and ${n.length - 2} more`; };
+  // land borders follow the provinces: a country that takes a province now touches its neighbours
+  const DYN = new Set(); let dynSig = '';
+  function syncBorders(g) {
+    const sig = cutsOf(g).map(k => k.land + k.taker + (k.ids || []).join('.')).join(',');
+    if (sig === dynSig) return; dynSig = sig;
+    DYN.clear();
+    if (!cutsOf(g).length) return;
+    const h = {}; for (const k of cutsOf(g)) for (const i of k.ids || []) h[i] = k.taker;
+    for (const i in h) for (const q in PBY[i].nb) { const b = h[q] || PBY[q].key, a = h[i]; if (a !== b) { DYN.add(a + '|' + b); DYN.add(b + '|' + a); } }
+  }
+  // Treaty land is ONE compact block next to the winner: nearest the border first, never the capital,
+  // never cutting the loser in two, every province sharing a real stretch of border with the winner
+  // (or the block), at most a third of the land. A land of one or two provinces gives none.
+  function landBlock(g, win, land, maxShare, maxDepth) {
+    const winState = stateOf(g, win), isWin = id => { const h = holderOf(g, id); return h !== land && stateOf(g, h) === winState; };
+    const pool = new Set(provsHeldBy(g, land).filter(i => PBY[i].key === land));
+    if ((PROVS_OF[land] || []).length <= 2 || !pool.size) return [];
+    const nbLen = id => Object.values(PBY[id].nb).reduce((a, b) => a + b, 0) || 1;
+    const touch = (id, block) => Object.entries(PBY[id].nb).reduce((t, [q, l]) => t + (isWin(+q) || block.has(+q) ? l : 0), 0);
+    const dist = {}, open = [];
+    for (const id of pool) if (Object.keys(PBY[id].nb).some(q => isWin(+q))) { dist[id] = 0; open.push(id); }
+    if (!open.length) return [];
+    while (open.length) {                                       // how far each province lies from the winner, walking through the land
+      open.sort((a, b) => dist[a] - dist[b]);
+      const id = open.shift(), c = PBY[id].c;
+      for (const q in PBY[id].nb) {
+        const j = +q; if (!pool.has(j)) continue;
+        const e = PBY[j].c, km = Math.hypot((c[0] - e[0]) * Math.cos((c[1] + e[1]) * Math.PI / 360), c[1] - e[1]) * 111;
+        if (dist[j] === undefined || dist[id] + km < dist[j]) { if (dist[j] === undefined) open.push(j); dist[j] = dist[id] + km; }
+      }
+    }
+    const far = Math.max(1, ...Object.values(dist));
+    const parts = set => {
+      const seen = new Set(); let n = 0;
+      for (const id of set) {
+        if (seen.has(id)) continue; n++;
+        const s = [id]; seen.add(id);
+        while (s.length) { const x = s.pop(); for (const q in PBY[x].nb) { const j = +q; if (set.has(j) && !seen.has(j)) { seen.add(j); s.push(j); } } }
+      }
+      return n;
+    };
+    const total = blockVal(PROVS_OF[land]), cap = total * Math.min(maxShare, 1 / 3) - blockVal((PROVS_OF[land] || []).filter(i => !pool.has(i)));
+    const block = new Set(), keep = new Set(pool), pieces0 = parts(keep);
+    let got = 0;
+    const order = Object.keys(dist).map(Number).sort((a, b) => dist[a] - dist[b]);
+    for (let pass = 0; pass < 3; pass++) for (const id of order) {
+      if (block.has(id) || PBY[id].cap) continue;
+      if (dist[id] / far > maxDepth + 0.05 || got + provVal(id) > cap + 1e-9 || touch(id, block) < 0.2 * nbLen(id)) continue;
+      keep.delete(id);
+      if (!keep.size || parts(keep) > pieces0) { keep.add(id); continue; }
+      block.add(id); got += provVal(id);
+    }
+    for (const id of [...keep]) {                               // a pocket the winner now surrounds goes with the block
+      if (PBY[id].cap || keep.size <= 1) continue;
+      const nb = Object.keys(PBY[id].nb).map(Number);
+      if (nb.length && nb.every(j => isWin(j) || block.has(j))) { keep.delete(id); block.add(id); }
+    }
+    return [...block].sort((a, b) => dist[a] - dist[b]);
+  }
 
   // ================= a new game =================
   // who: 'US', 'SU', or the key of any other country
@@ -531,12 +611,22 @@
 
   // ================= border changes after wars =================
   // A cut: part of `land` (from the border with `taker`, `depth` 0..1 of the way in) now belongs to `taker`.
+  // the provinces handed over are one compact block from the border (see landBlock)
   function cutLand(g, land, taker, depth) {
-    if (isHome(land) || land === taker) return;
-    depth = clamp(depth, 0.12, 0.6);
+    if (isHome(land) || land === taker) return [];
+    const ids = landBlock(g, taker, land, 1 / 3, clamp(depth, 0.12, 1));
+    if (!ids.length) return [];
     const old = g.cuts.find(k => k.land === land && k.taker === taker);
-    if (old) old.depth = Math.max(old.depth, depth);
-    else g.cuts.push({ land, taker, depth, year: g.year, occ: newOcc() });
+    if (old) old.ids = [...new Set([...old.ids, ...ids])];
+    else g.cuts.push({ land, taker, ids, year: g.year, occ: newOcc() });
+    syncBorders(g);
+    return ids;
+  }
+  // saves from before provinces: a cut was a depth, now it is the provinces that depth covered
+  function fixCuts(g) {
+    const old = (g.cuts || []).filter(k => !k.ids); g.cuts = (g.cuts || []).filter(k => k.ids);
+    for (const k of old) { const ids = landBlock(g, k.taker, k.land, 1 / 3, k.depth || 0.3); if (ids.length) g.cuts.push({ land: k.land, taker: k.taker, ids, year: k.year, occ: k.occ || newOcc() }); }
+    syncBorders(g);
   }
   // the land `win` lost to `lose` comes back
   function returnLand(g, win, lose) {
@@ -596,7 +686,7 @@
     owner = owner || g.nation; if (!owner) return [];
     const out = [];
     for (const d of D.COUNTRIES) { const c = g.c[d.key]; if (c.owner === owner && !isUnionPart(g, d.key)) { c.occ = c.occ || newOcc(); out.push({ id: d.key, kind: 'annex', land: d.key, name: d.name, occ: c.occ, worth: d.val, since: c.since }); } }
-    for (const k of g.cuts) if (k.taker === owner) { k.occ = k.occ || newOcc(); out.push({ id: 'cut:' + k.land, kind: 'cut', land: k.land, name: `Occupied ${info(k.land).name}`, occ: k.occ, worth: info(k.land).val * k.depth, since: k.year }); }
+    for (const k of g.cuts) if (k.taker === owner) { k.occ = k.occ || newOcc(); out.push({ id: 'cut:' + k.land, kind: 'cut', land: k.land, name: provList(k.ids || []) || `Occupied ${info(k.land).name}`, occ: k.occ, worth: blockVal(k.ids || []), since: k.year }); }
     return out;
   }
   const territory = (g, id) => territories(g).find(t => t.id === id);
@@ -666,8 +756,19 @@
     return (side === 'att' ? w.front : -w.front) + (w.capFell && w.capFell[other] ? 15 : 0) - (w.capFell && w.capFell[side] ? 15 : 0);
   }
   // which terms are possible against `enemy` for the player's country `me`
+  // the provinces a winner could take: a block from its border, as deep as the war got
+  function landTerm(g, me, enemy) {
+    if (isHome(enemy) || g.c[enemy].owner) return null;
+    const w = g.wars.find(x => (x.att === me && x.def === enemy) || (x.def === me && x.att === enemy));
+    const depth = w ? Math.max(0.15, warScore(w, w.att === me ? 'att' : 'def') / 100) : 1;
+    const ids = landBlock(g, me, enemy, 1 / 3, depth);
+    return ids.length ? { id: 'land', name: `Take ${provList(ids)}`, cost: Math.round(12 + blockVal(ids) * 14), help: `${ids.length} border province${ids.length > 1 ? 's' : ''} of ${info(enemy).name} become yours (never the capital, never cutting it in two).`, ok: true, why: '', ids } : null;
+  }
+  const termCost = (g, me, enemy, id) => id === 'land' ? ((landTerm(g, me, enemy) || {}).cost || 0) : PEACE_TERMS[id].cost;
   function termsFor(g, me, enemy) {
     const out = [];
+    const lt = landTerm(g, me, enemy);
+    if (lt) out.push(lt);
     for (const id in PEACE_TERMS) {
       const T = PEACE_TERMS[id];
       let ok = true, why = '';
@@ -682,7 +783,7 @@
   // would the enemy sign? (for the player's own war)
   function peaceChance(g, w, picks) {
     const me = playerKey(g), side = w.att === me ? 'att' : 'def', score = warScore(w, side);
-    const cost = picks.reduce((t, id) => t + PEACE_TERMS[id].cost, 0);
+    const enemy = w.att === me ? w.def : w.att, cost = picks.reduce((t, id) => t + termCost(g, me, enemy, id), 0);
     const tired = w.years * 6;
     return score >= 0 ? cost <= score + tired : cost === 0 && -score <= 20 + tired;
   }
@@ -715,6 +816,7 @@
         if (lose === g.nation) overthrow(g, `The peace treaty puts a government loyal to ${info(win).name} in power. You are out.`);
       }
       if (id === 'annex') { annex(g, win, lose); if (lose === g.nation) overthrow(g, `${info(win).name} annexes your country.`); }
+      if (id === 'land') { const ids = cutLand(g, lose, win, depth); if (ids.length) done.push(`${provList(ids)} to ${info(win).name}`); continue; }
       if (id !== 'white') done.push(PEACE_TERMS[id].name.toLowerCase());
     }
     if (win === g.nation) g.bonus.ME += 2;
@@ -723,10 +825,10 @@
   // a won war: the player picks terms worth up to 100 points
   function conference(g, picks) {
     const P = g.peace; if (!P) return;
-    const cost = picks.reduce((t, id) => t + PEACE_TERMS[id].cost, 0);
+    const cost = picks.reduce((t, id) => t + termCost(g, P.win, P.lose, id), 0);
     if (cost > 100) return 'Too many demands';
     g.peace = null;
-    applyTerms(g, P.win, P.lose, picks.length ? picks : ['white'], 0.5);
+    applyTerms(g, P.win, P.lose, picks.length ? picks : ['white'], 1);
   }
 
   // ================= formable nations =================
@@ -995,9 +1097,10 @@
       const ahead = w.front >= 0 ? w.att : w.def, behind = w.front >= 0 ? w.def : w.att;
       if (Math.abs(w.front) >= 15 && !isHome(behind) && !w.noCut) {
         // the ceasefire line runs through every land of the loser that touches the winner (not a superpower's heartland)
+        syncBorders(g);
         const winLands = landsOf(g, ahead), lands = landsOf(g, behind).filter(k => !isHome(k) && winLands.some(j => neighbours(k, j)));
-        for (const k of lands.length ? lands : [behind]) cutLand(g, k, ahead, Math.abs(w.front) / 100 * 0.8);
-        say(g, `${A} and ${Dn} sign a truce. The ceasefire line becomes the new border: ${info(ahead).name} keeps the land it holds.`);
+        const got = (lands.length ? lands : [behind]).flatMap(k => cutLand(g, k, ahead, Math.abs(w.front) / 100 * 0.8));
+        say(g, got.length ? `${A} and ${Dn} sign a truce. The ceasefire line becomes the new border: ${info(ahead).name} keeps ${provList(got)}.` : `${A} and ${Dn} sign a truce. The old border stays.`);
       } else say(g, `${A} and ${Dn} sign a truce. Nobody wins.`);
       return;
     }
@@ -1042,6 +1145,8 @@
     if (L.puppetOf && L.puppetOf !== win) L.puppetOf = null;
     if (isHome(win)) g.bonus[win === 'USA' ? 'US' : 'SU'] += 2;
     const terms = ['a friendly government'];
+    // a clear win next door also takes a block of border provinces
+    if (!isHome(win) && score >= 55 && borders(g, win, lose)) { const ids = cutLand(g, lose, win, score / 100); if (ids.length) terms.push(`the cession of ${provList(ids)}`); }
     reparations(g, win, lose); terms.push('reparations');
     if (score >= 70) { L.army *= 0.5; terms.push('disarmament'); }
     say(g, `${info(win).name} defeats ${info(lose).name} and imposes ${terms.slice(0, -1).join(', ')} and ${terms[terms.length - 1]}.`);
@@ -1068,5 +1173,5 @@
     newGame, check, act, homeCheck, homeAct, warOf, warCheck, warHelp, makePeace, deployed, detente, endYear, choose,
     score, income, nationScore, nationIncome, friendsOf, puppetsOf, pactsOf, allied, blocOf, leaning, isHome, info, neighbours,
     borders, landsOf, capitalName, computerTurn, baseArmy, valueOf, PARTIES, PARTY, partyCheck, partyAct,
-    PUSH_CAP, isUnionPart, regionsOf, free, judge, finish, sovietWeak, POLICIES, TERR_ACTIONS, territories, territoryCheck, territoryAct, lostLand, takenLand, PEACE_TERMS, termsFor, peaceChance, proposePeace, conference, formCheck, form, ownedBy, stateOf, applyNames, playerKey, warScore };
+    PUSH_CAP, isUnionPart, regionsOf, free, judge, finish, sovietWeak, POLICIES, TERR_ACTIONS, territories, territoryCheck, territoryAct, lostLand, takenLand, PROV, PBY, holderOf, provVal, provList, landBlock, cutLand, fixCuts, syncBorders, PEACE_TERMS, termsFor, peaceChance, proposePeace, conference, formCheck, form, ownedBy, stateOf, applyNames, playerKey, warScore };
 })(typeof window !== 'undefined' ? window : globalThis);
