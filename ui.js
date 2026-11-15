@@ -31,7 +31,8 @@
     .attr('class', f => 'land' + (f.home ? ' click' : '')).attr('d', path).attr('fill', '#2a2e2c')
     .on('mousemove', (e, f) => hover(e, f)).on('mouseleave', () => hover())
     .on('click', (e, f) => { if (g && g.conf && claimClick(f)) return; if (f.key) select(GAME.stateOf(g, f.key)); })
-    .on('dblclick', (e, f) => { if (f.key) selectRegion(f.key); });                 // double click: that region
+    .on('dblclick', (e, f) => { if (f.key) selectRegion(f.key); })                 // double click: that region
+    .on('contextmenu', (e, f) => { e.preventDefault(); if (g && unitSel.size) orderTo(f.pid); });
   // who holds each province: follows the cuts; every outline cache is thrown away when it changes
   let holdSig = '';
   function syncHolders() {
@@ -63,8 +64,12 @@
     .attr('orient', 'auto').append('path').attr('d', 'M0,0 L10,5 L0,10 z').attr('fill', '#ffa040');
   defs.append('pattern').attr('id', 'occupied').attr('width', 6).attr('height', 6).attr('patternUnits', 'userSpaceOnUse').attr('patternTransform', 'rotate(-45)')
     .append('rect').attr('width', 2).attr('height', 6).attr('fill', 'rgba(0,0,0,.45)');
+  const occPath = root.append('path').attr('class', 'occhatch'), frontPath = root.append('path').attr('class', 'frontline');
   const fronts = root.append('g'), arrows = root.append('g');
   const wars = root.append('g'), towns = root.append('g'), capitals = root.append('g'), labels = root.append('g'), cityLabels = root.append('g');
+  const planLayer = root.append('g'), battleLayer = root.append('g'), unitLayer = root.append('g');
+  defs.append('marker').attr('id', 'planhead').attr('viewBox', '0 0 10 10').attr('refX', 7).attr('refY', 5).attr('markerWidth', 3.5).attr('markerHeight', 3.5)
+    .attr('orient', 'auto').append('path').attr('d', 'M0,0 L10,5 L0,10 z').attr('fill', '#e8c45a');
 
   // outlines are merged from the provinces each state or land holds right now
   const stateCache = {}, landsCache = {}, regionCache = {}, outline = {};
@@ -219,7 +224,7 @@
 
   let zoomK = 1;
   const zoom = d3.zoom().scaleExtent([1, 8]).translateExtent([[0, 0], [W, H]])
-    .on('zoom', e => { root.attr('transform', e.transform); zoomK = e.transform.k; drawLabels(); fronts.selectAll('.usize').attr('transform', `scale(${1 / Math.sqrt(zoomK)})`); rescale(); })
+    .on('zoom', e => { root.attr('transform', e.transform); zoomK = e.transform.k; drawLabels(); root.selectAll('.usize').attr('transform', `scale(${1 / Math.sqrt(zoomK)})`); battleLayer.selectAll('text').style('font-size', 8 / zoomK + 'px'); rescale(); })
     .on('end', () => drawCities());                                     // city names are sorted out once the zoom stops
   svg.call(zoom).on('dblclick.zoom', null);
   // hatching and capital dots keep their size on screen at any zoom
@@ -285,6 +290,8 @@
   }
   function colour(key) {
     if (!key || !g) return '#2a2e2c';
+    const rl = GAME.rebLand(key);
+    if (rl) { const w = g.c[rl] && g.c[rl].war; return (w && GAME.REBELS[w.ideo] || {}).color || (w && w.sep ? '#d0a040' : campColour[w ? w.rebels : 'SU']); }
     if (g.c[key] && g.c[key].owner) return colour(g.c[key].owner);
     if (!GAME.isHome(key) && !g.c[key].independent) return 'url(#colony)';
     if (mapMode === 'pact') { const p = mainPact(key); return p ? p.color : '#41453f'; }
@@ -380,14 +387,15 @@
     $('legend-dyn').innerHTML = legendHtml();
     const cv = g.conf ? GAME.confView(g) : null, claimBy = {}, canTake = new Set();
     if (cv) { for (const c of cv.claims) for (const i of c.ids || []) claimBy[i] = c.by; if (cv.myTurn) for (const o of cv.options) if (o.kind === 'take' && o.ok) canTake.add(o.target); }
-    lands.attr('fill', f => claimBy[f.pid] ? colour(claimBy[f.pid]) : colour(f.key)).classed('claimed', f => !!claimBy[f.pid]).classed('claimable', f => canTake.has(f.pid))
+    const ctl = g.ctl || {};
+    lands.attr('fill', f => claimBy[f.pid] ? colour(claimBy[f.pid]) : ctl[f.pid] ? zoneColour(colour(ctl[f.pid]), colour(f.key)) : colour(f.key)).classed('claimed', f => !!claimBy[f.pid]).classed('claimable', f => canTake.has(f.pid))
       .classed('restless', f => !!(f.key && g.c[f.key] && g.c[f.key].owner && g.c[f.key].occ && g.c[f.key].occ.unrest >= 60));
     selLine.attr('d', sel ? (regionSel ? regionOutline(sel) : stateOutline(sel)) : g.nation ? stateOutline(g.nation) : null).classed('mine', !sel && !!g.nation).classed('region', !!sel && regionSel);
     // wars between countries: the winning side holds a band of the other's land along their border
     const W2 = g.wars.filter(w => center[w.att] && center[w.def]);
     // land taken in earlier wars: a real border, drawn first so wars go on top
     const zones = [];                                   // land taken in earlier wars is simply drawn as its new holder's provinces
-    for (const w of W2) {
+    for (const w of (window.OLD_FRONTS ? W2 : [])) {
       const taker = w.front >= 0 ? w.att : w.def, state = w.front >= 0 ? w.def : w.att;
       // the fighting spreads over all the losing side's lands: its own, its regions, what it annexed (never a superpower's heartland)
       const land = GAME.landsOf(g, state).filter(k => !GAME.isHome(k));
@@ -399,7 +407,7 @@
     }
     // civil wars: the rebels advance from a friendly neighbour's border, or hold the land far from the capital
     for (const d of D.COUNTRIES) {
-      const w = g.c[d.key].war; if (!w || !center[d.key]) continue;
+      const w = g.c[d.key].war; if (!w || !center[d.key] || w.div) continue;
       const share = (GAME.SIDE[w.rebels] * w.balance + 100) / 200; if (share < 0.04) continue;
       const friend = (NEIGHBOURS[d.key] || []).find(n => n === GAME.HOME[w.rebels] || (g.c[n] && !GAME.isHome(n) && g.c[n].independent && g.c[n].a * GAME.SIDE[w.rebels] >= 30));
       zones.push({ id: 'c' + d.key, taker: friend || null, land: d.key, state: d.key, depth: share * 0.9, prev: 0, fill: (GAME.REBELS[w.ideo] || {}).color || campColour[w.rebels], civil: true });
@@ -507,7 +515,7 @@
       um.select('.usize').attr('transform', `scale(${1 / Math.sqrt(zoomK)})`);
       (window.NO_ANIM ? um : um.transition().duration(ROLL).ease(d3.easeCubicInOut)).attr('transform', u => `translate(${u.x},${u.y})`).style('opacity', 1);
     });
-    arrows.selectAll('path').data(W2, w => w.id).join('path').attr('class', 'warline').attr('marker-end', 'url(#arrowhead)').attr('d', w => {
+    arrows.selectAll('path').data(W2.filter(w => !GAME.unitsOf(g, w).length), w => w.id).join('path').attr('class', 'warline').attr('marker-end', 'url(#arrowhead)').attr('d', w => {
       const a = center[w.att], b = center[w.def], mx = (a[0] + b[0]) / 2, my = (a[1] + b[1]) / 2;
       return `M${a[0]},${a[1]} Q${mx - (b[1] - a[1]) * 0.2},${my + (b[0] - a[0]) * 0.2} ${b[0]},${b[1]}`;
     });
@@ -521,7 +529,104 @@
       .join('circle').attr('class', x => 'capital' + (fallenTo[x.key] ? ' fallen' : '')).attr('r', x => (fallenTo[x.key] ? 2.6 : 1.6) * Math.pow(1 / zoomK, 0.75))
       .attr('fill', x => fallenTo[x.key] ? colour(fallenTo[x.key]) : null)
       .attr('cx', x => proj([x.lon, x.lat])[0]).attr('cy', x => proj([x.lon, x.lat])[1]);
-    drawLabels(); drawCities();
+    drawLabels(); drawCities(); drawWar();
+  }
+  // ================= divisions on the map =================
+  // occupied land is hatched, the front runs between the two sides' provinces, each stack of divisions
+  // is a counter (colour of its country, number of divisions, a strength bar). Yours have a gold rim:
+  // click to pick them (shift: add), right-click a province to send them there.
+  let unitSel = new Set();
+  const pxy = id => proj(GAME.PBY[id].c);
+  function stackXY(u) {
+    const a = pxy(u.p); if (u.to === null || u.to === undefined || !u.mv) return a;
+    const b = pxy(u.to), t = GAME.marchShare(u); return [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t];
+  }
+  function drawWar() {
+    const ctl = g.ctl || {}, tag = {};
+    for (const w of GAME.fronts(g)) { const T = GAME.theatre(g, w); for (const id in T.map) if (T.map[id].side) tag[id] = w.id + ':' + T.map[id].side; }
+    occPath.attr('d', Object.keys(ctl).length ? mergeD(geoms.filter(x => ctl[x.pid])) : null);
+    frontPath.attr('d', path(topojson.mesh(PT, O, (a, b) => { const x = tag[a.pid], y = tag[b.pid]; return a !== b && x && y && x !== y && x.split(':')[0] === y.split(':')[0]; })));
+    const mineK = GAME.myKeys(g), units = (g.units || []);
+    unitSel = new Set([...unitSel].filter(id => units.some(u => u.id === id && mineK.includes(u.k))));
+    // stacks: one counter per country, province and march
+    const st = {};
+    for (const u of units) { const id = u.k + '|' + u.p + '|' + (u.mv ? u.to : ''); (st[id] = st[id] || { id, k: u.k, p: u.p, us: [] }).us.push(u); }
+    const stacks = Object.values(st), at = {};
+    for (const x of stacks) {
+      const xy = stackXY(x.us[0]), key = Math.round(xy[0] * 2) + ',' + Math.round(xy[1] * 2), n = at[key] = (at[key] || 0) + 1;
+      x.x = xy[0] + (n - 1) * 7.5 / Math.sqrt(zoomK); x.y = xy[1];
+      x.str = x.us.reduce((s, u) => s + u.str, 0) / x.us.length; x.org = x.us.reduce((s, u) => s + u.org, 0) / x.us.length;
+      x.mine = mineK.includes(x.k); x.sel = x.us.some(u => unitSel.has(u.id)); x.cut = x.us.some(u => u.cut);
+    }
+    const ug = unitLayer.selectAll('g.div').data(stacks, x => x.id);
+    ug.exit().remove();
+    const ue = ug.enter().append('g').attr('class', 'div').attr('transform', x => `translate(${x.x},${x.y})`)
+      .on('click', (e, x) => { e.stopPropagation(); pickStack(x, e.shiftKey); })
+      .on('contextmenu', (e, x) => { e.preventDefault(); e.stopPropagation(); if (unitSel.size) orderTo(x.p); })
+      .on('mousemove', (e, x) => hoverStack(e, x)).on('mouseleave', () => hover());
+    const inner = ue.append('g').attr('class', 'usize');
+    inner.append('rect').attr('class', 'ubox').attr('x', -5).attr('y', -3.5).attr('width', 10).attr('height', 7).attr('rx', 0.8);
+    inner.append('path').attr('class', 'ux').attr('d', 'M-5,-3.5L0,0M5,-3.5L0,0M-5,3.5L0,0M5,3.5L0,0');
+    inner.append('text').attr('class', 'un').attr('y', 1.9);
+    inner.append('rect').attr('class', 'ubar0').attr('x', -5).attr('y', 4.1).attr('width', 10).attr('height', 1.3);
+    inner.append('rect').attr('class', 'ubar').attr('x', -5).attr('y', 4.1).attr('height', 1.3);
+    const um = ue.merge(ug).classed('mine', x => x.mine).classed('sel', x => x.sel).classed('cut', x => x.cut);
+    um.select('.ubox').attr('fill', x => colour(x.k));
+    um.select('.un').text(x => x.us.length);
+    um.select('.ubar').attr('width', x => 10 * x.str).attr('fill', x => x.str > 0.66 ? '#7cc36b' : x.str > 0.33 ? '#e8c45a' : '#e0533c');
+    um.select('.usize').attr('transform', `scale(${1 / Math.sqrt(zoomK)})`);
+    (window.NO_ANIM ? um : um.transition().duration(700).ease(d3.easeCubicInOut)).attr('transform', x => `translate(${x.x},${x.y})`);
+    um.order();
+    // your marching orders: a dashed line along the way
+    const plans = units.filter(u => mineK.includes(u.k) && u.goal !== null && u.goal !== undefined && u.path && u.path.length);
+    const seen = new Set(), lines = [];
+    for (const u of plans) { const id = u.p + '>' + u.goal; if (seen.has(id)) continue; seen.add(id); lines.push({ id, pts: [stackXY(u), ...u.path.map(pxy)], sel: unitSel.has(u.id) }); }
+    planLayer.selectAll('path').data(lines, l => l.id).join('path').attr('class', l => 'plan' + (l.sel ? ' sel' : '')).attr('marker-end', 'url(#planhead)')
+      .attr('d', l => 'M' + l.pts.map(p => p.join(',')).join('L'));
+    // last season's battles
+    battleLayer.selectAll('text').data(g.battles || [], b => b.w + '-' + b.p).join('text').attr('class', b => 'battle' + (b.won ? ' won' : ''))
+      .attr('x', b => pxy(b.p)[0]).attr('y', b => pxy(b.p)[1] - 6).text('✸')
+      .style('font-size', 8 / zoomK + 'px');
+  }
+  function pickStack(x, add) {
+    if (!x.mine) { const rl = GAME.rebLand(x.k); select(rl || GAME.stateOf(g, x.k)); return; }
+    if (!add) unitSel = new Set();
+    const all = x.us.every(u => unitSel.has(u.id));
+    for (const u of x.us) all && add ? unitSel.delete(u.id) : unitSel.add(u.id);
+    refresh();
+  }
+  function orderTo(pid) {
+    const n = GAME.orderUnits(g, [...unitSel], pid);
+    toast(n ? `${n} division${n > 1 ? 's' : ''} march${n > 1 ? '' : 'es'} to ${GAME.PBY[pid].name}` : `They cannot get to ${GAME.PBY[pid].name}`);
+    refresh();
+  }
+  function hoverStack(e, x) {
+    const tip = $('tip'), P = GAME.PBY[x.p];
+    tip.innerHTML = `<b>${x.us.length} division${x.us.length > 1 ? 's' : ''} of ${esc(GAME.nameOf(g, x.k))}</b><br><span class="prov">${esc(P.name)}</span>
+      <br>Strength ${Math.round(x.str * 100)}% · readiness ${Math.round(x.org * 100)}%${x.cut ? '<br><b style="color:#e0533c">Cut off: no supply</b>' : ''}
+      ${x.us[0].mv && x.us[0].to !== null ? '<br>Marching to ' + esc(GAME.PBY[x.us[0].to].name) : ''}${x.mine ? '<br><span class="dim">Click: pick them · then right-click a province</span>' : ''}`;
+    tip.hidden = false;
+    const r = $('mapbox').getBoundingClientRect();
+    tip.style.left = Math.min(e.clientX - r.left + 14, r.width - 200) + 'px'; tip.style.top = (e.clientY - r.top + 14) + 'px';
+  }
+  // the card for the divisions you picked, and the orders for a whole war
+  function unitCard() {
+    const us = (g.units || []).filter(u => unitSel.has(u.id)); if (!us.length) return '';
+    const str = us.reduce((s, u) => s + u.str, 0) / us.length, org = us.reduce((s, u) => s + u.org, 0) / us.length;
+    const goal = us.find(u => u.goal !== null && u.goal !== undefined), auto = us.every(u => u.auto);
+    return `<div class="warbox unitcard"><b>${us.length} division${us.length > 1 ? 's' : ''} picked</b>
+      <div class="sub">Strength ${Math.round(str * 100)}% · readiness ${Math.round(org * 100)}% · ${auto ? 'on front orders' : goal ? 'marching to ' + esc(GAME.PBY[goal.goal].name) : 'holding where they stand'}</div>
+      <div class="sub"><b>Right-click</b> a province to send them there. Into enemy land means attack.</div>
+      <div class="row"><button class="act small" data-uorder="hold"><b>Hold here</b></button><button class="act small" data-uorder="auto"><b>Front orders</b></button><button class="act small" data-uorder="none"><b>Let go</b></button></div></div>`;
+  }
+  function stanceHtml(sw) {
+    const ks = GAME.myKeys(g), S = GAME.sidesOf(g, sw), mySide = ks.some(k => S.att.includes(k)) ? 'att' : ks.some(k => S.def.includes(k)) ? 'def' : null;
+    if (!mySide) return '';
+    const st = (g.stance || {})[sw.id] || 'advance', n = GAME.unitsOf(g, sw).filter(u => ks.includes(u.k)).length, foe = GAME.unitsOf(g, sw).filter(u => !S[mySide].includes(u.k)).length;
+    return `<h3>Your army: ${n} division${n === 1 ? '' : 's'} <span class="sub">against ${foe}</span></h3>
+      <div class="sub">Divisions on front orders follow your generals. Pick a counter on the map (gold rim) to command it yourself.</div>
+      <div class="row"><button class="act small ${st === 'advance' ? 'on' : ''}" data-stance="${sw.id}|advance"><b>Advance</b><small>attack where we are stronger</small></button>
+      <button class="act small ${st === 'hold' ? 'on' : ''}" data-stance="${sw.id}|hold"><b>Hold the line</b><small>defend, take back only our own land</small></button></div>`;
   }
   // country names: the important ones first (the selection, superpowers, the most valuable); a name that would overlap one already placed is left out
   const labelBox = c => { const fs = 7 * Math.pow(zoomK, 0.2), [x, y] = center[c.key], w = c.name.length * fs * 0.56 + 2, yy = y * zoomK + 9 * Math.pow(zoomK, 0.2); return [x * zoomK - w / 2, yy - fs * 0.85, x * zoomK + w / 2, yy + fs * 0.25]; };
@@ -554,7 +659,9 @@
       const cv = GAME.confView(g), cl = cv.claims.find(c => (c.ids || []).includes(f.pid)), o = cv.options.find(x => x.kind === 'take' && x.target === f.pid);
       confLine = cl ? `<br><b style="color:#e8c45a">Claimed by ${esc(cl.byName)}</b>` : o ? `<br><b style="color:#e8c45a">${o.ok ? 'Click to take: ' + o.cost + ' points' : esc(o.why)}</b>` : '';
     }
-    tip.innerHTML = `<b>${esc(d.name)}${f.key === g.nation ? ' (you)' : ''}</b>${provLine}${confLine}<br>${c.owner ? 'Part of ' + esc(GAME.info(c.owner).name) + (c.owner === g.nation ? ' (yours)' : '') : GAME.isHome(f.key) ? 'Superpower' : !c.independent ? 'Colony of ' + esc(d.colony) + ' until ' + d.indep : GAME.leaning(c.a) + (c.war ? ' · ⚔ civil war' : '')}
+    const occBy = g.ctl && g.ctl[P && P.id], here = (g.units || []).filter(u => P && u.p === P.id);
+    const warLine = (occBy ? `<br><b style="color:#f0a03c">${GAME.rebLand(occBy) ? 'Held by ' : 'Occupied by '}${esc(GAME.nameOf(g, occBy))}</b>` : '') + [...new Set(here.map(u => u.k))].map(k => `<br>${here.filter(u => u.k === k).length} division(s) of ${esc(GAME.nameOf(g, k))}`).join('') + (unitSel.size ? '<br><span class="dim">Right-click: send your divisions here</span>' : '');
+    tip.innerHTML = `<b>${esc(d.name)}${f.key === g.nation ? ' (you)' : ''}</b>${provLine}${warLine}${confLine}<br>${c.owner ? 'Part of ' + esc(GAME.info(c.owner).name) + (c.owner === g.nation ? ' (yours)' : '') : GAME.isHome(f.key) ? 'Superpower' : !c.independent ? 'Colony of ' + esc(d.colony) + ' until ' + d.indep : GAME.leaning(c.a) + (c.war ? ' · ⚔ civil war' : '')}
       ${c.independent || GAME.isHome(f.key) ? `<br>Army ${Math.round(c.army)}` : ''}${ps ? '<br>' + esc(ps) : ''}${GAME.warOf(g, f.key) ? '<br>⚔ at war' : ''}${GAME.lostLand(g, f.key).map(k => '<br>Lost ' + esc(GAME.provList(k.ids || [])) + ' to ' + esc(GAME.info(k.taker).name)).join('')}${region !== f.key ? '<br><i>Region: ' + esc(GAME.info(region).name) + (g.c[region].occ && !g.c[region].occ.core ? ' · unrest ' + Math.round(g.c[region].occ.unrest) : '') + '</i>' : ''}<br><span class="dim">Double-click: this region</span>`;
     tip.hidden = false;
     const r = $('mapbox').getBoundingClientRect();
@@ -564,10 +671,12 @@
   // ================= top bar =================
   function topBar() {
     const t = g.tension, tc = t >= 80 ? '#ff4b3e' : t >= 55 ? '#f0a03c' : '#6fbf73';
-    $('year').textContent = g.year;
+    const fighting = GAME.playerFights(g);
+    $('year').textContent = fighting ? `${GAME.SEASONS[g.season || 0]} ${g.year}` : g.year;
+    $('end').textContent = fighting ? 'End Season ▸' : 'End Year ▸';
     $('tension').innerHTML = `Tension <span class="bar"><i style="width:${t}%;background:${tc}"></i></span><b style="color:${tc}">${Math.round(t)}</b>`;
     $('end').disabled = !!g.over || !!g.conf;
-    $('end').title = g.conf ? 'Finish the peace conference first' : 'End the year (Enter)';
+    $('end').title = g.conf ? 'Finish the peace conference first' : fighting ? 'At war, the year runs season by season (Enter)' : 'End the year (Enter)';
     $('detente').hidden = !!g.nation;
     $('finish').hidden = !!g.over || g.year <= GAME.END;
     if (g.nation) {
@@ -588,22 +697,25 @@
   const pips = n => `<span class="pips">${[1, 2, 3, 4, 5].map(i => `<i class="${i <= n ? 'on' : ''}"></i>`).join('')}</span>`;
   const btn = (attr, name, cost, r, note) => `<button class="act" ${attr} ${r.ok ? '' : 'disabled'}><b>${esc(name)}</b><em>${cost} IP</em><small>${esc(r.ok ? note : r.why)}</small></button>`;
   const actor = () => g.nation ? 'ME' : g.side;
+  const divLine = (sw, side) => { const S = GAME.sidesOf(g, sw)[side], n = GAME.unitsOf(g, sw).filter(u => S.includes(u.k)).length; return n ? `${n} division${n > 1 ? 's' : ''}` : 'army ' + Math.round(g.c[sw[side]].army); };
   function warBox(sw) {
     const A = GAME.info(sw.att).name, B = GAME.info(sw.def).name, f = (sw.front + 100) / 2;
     let h = `<div class="warbox"><b>⚔ War: ${esc(A)} attacked ${esc(B)}</b> <span class="sub">year ${sw.years + 1}</span>
-      <div class="wsides"><span><b>${esc(A)}</b><small>army ${Math.round(g.c[sw.att].army)}</small></span><span><b>${esc(B)}</b><small>army ${Math.round(g.c[sw.def].army)}</small></span></div>
+      <div class="wsides"><span><b>${esc(A)}</b><small>${divLine(sw, 'att')}</small></span><span><b>${esc(B)}</b><small>${divLine(sw, 'def')}</small></span></div>
       <div class="warbar"><i style="width:${f}%;background:#e0903c"></i><i style="flex:1;background:#5aa39a"></i></div>
       <div class="wstate">${sw.front > 15 ? `${esc(A)} is advancing` : sw.front < -15 ? `${esc(A)} is pushed back` : 'Stalemate'}</div>
       ${['att', 'def'].filter(s => sw.capFell && sw.capFell[s]).map(s => `<div class="sub" style="color:#f0a03c">${esc(GAME.capitalName(sw[s]))} has fallen.</div>`).join('')}
-      <div class="sub">${sw.limited ? 'A border war: after 3 years at most it ends, and at worst a strip of land changes hands.' : sw.annexOnWin ? 'A war of conquest: if the attacker wins, the country disappears into it. After 8 years: a truce.' : 'If the attacker wins, it installs a friendly government. After 8 years: a truce.'}</div>
+      <div class="sub">${sw.held ? `${esc(A)} holds ${Math.round(sw.held.att * 100)}% of ${esc(B)}; ${esc(B)} holds ${Math.round(sw.held.def * 100)}% of ${esc(A)}. ` : ''}A country falls when it loses its capital and most of its land.</div>
+      <div class="sub">${sw.limited ? 'A border war: after 3 years at most it ends, and at worst a strip of land changes hands.' : sw.annexOnWin ? 'A war of conquest: if the attacker wins, the country disappears into it. After 8 years: a truce on the front line.' : 'If the attacker wins, it installs a friendly government. After 8 years: a truce on the front line.'}</div>
       ${['US', 'SU'].filter(p => sw.troops[p]).map(p => `<div class="sub">${p === 'US' ? 'American' : 'Soviet'} troops fight for ${esc(GAME.info(sw[sw.troops[p]]).name)}.</div>`).join('')}</div>`;
     const mine = GAME.playerKey(g);
+    h += stanceHtml(sw);
     if (sw.att === mine || sw.def === mine) return h + peaceTalks(sw, mine);
     h += `<h3>Take part</h3>`;
     for (const party of ['att', 'def']) for (const kind of g.nation ? ['arm'] : ['arm', 'troops']) {
       const r = GAME.warCheck(g, actor(), sw, party, kind), nm = GAME.info(sw[party]).name;
       h += btn(`data-war="${party}|${kind}"`, kind === 'arm' ? `Arm ${nm}` : `Send troops for ${nm}`, r.cost, r,
-        kind === 'arm' ? 'Weapons: a push for their side this year.' : 'A big push every year. Tension rises, costs 2 IP a year, and losing hurts your score.');
+        kind === 'arm' ? 'Weapons: their divisions get stronger and readier.' : 'Eight of your best divisions land and fight for them. Tension rises, costs 2 IP a year, and losing hurts your score.');
     }
     return h;
   }
@@ -638,7 +750,14 @@
     return `<div class="warbox"><b>⚔ ${w.sep ? 'Uprising' : 'Civil war'}</b> <span class="sub">year ${w.years + 1} · ${w.sep ? `fighting for independence, backed by the ${w.rebels === 'SU' ? 'East' : 'West'}` : (GAME.REBELS[w.ideo] ? GAME.REBELS[w.ideo].name.toLowerCase() + ', backed by the ' + (w.rebels === 'SU' ? 'East' : 'West') : w.rebels === 'SU' ? 'communist rebels' : 'anti-communist rebels')}</span>
       <div class="warbar"><i style="width:${100 - west}%;background:var(--su)"></i><i style="flex:1;background:var(--us)"></i></div>
       <div class="ends"><span>pro-Soviet</span><span>${w.balance > 0 ? 'West winning' : w.balance < 0 ? 'East winning' : 'even'}</span><span>pro-Western</span></div>
-      ${['US', 'SU'].filter(p => w.troops[p]).map(p => `<div class="sub">${p === 'US' ? 'American' : 'Soviet'} troops are fighting here.</div>`).join('')}</div>`;
+      ${['US', 'SU'].filter(p => w.troops[p]).map(p => `<div class="sub">${p === 'US' ? 'American' : 'Soviet'} troops are fighting here.</div>`).join('')}
+      ${w.div ? civilDivs(w) : ''}</div>`;
+  }
+  function civilDivs(w) {
+    const S = GAME.sidesOf(g, w), us = GAME.unitsOf(g, w), n = side => us.filter(u => S[side].includes(u.k)).length;
+    const held = w.held ? Math.round(w.held.att * 100) : 0;
+    return `<div class="wsides"><span><b>Rebels</b><small>${n('att')} divisions</small></span><span><b>Government</b><small>${n('def')} divisions</small></span></div>
+      <div class="sub">The rebels hold ${held}% of the land. They win by taking the capital and half the land${w.sep ? ' (for independence: 60% of the land)' : ''}; the government wins by destroying their army. After 10 years: a truce.</div>${stanceHtml(w)}`;
   }
   function partiesHtml(key) {
     const c = g.c[key]; if (!c.parties) return '';
@@ -756,6 +875,20 @@
     const ps = el.querySelector('#confpass'); if (ps) ps.onclick = () => { GAME.confPass(g); toast('You sign. The others finish their demands.'); after(); showEvents(); };
   }
   function panel() {
+    panelMain();
+    const el = $('panel'), card = g.conf ? '' : unitCard();
+    if (card) el.insertAdjacentHTML('afterbegin', card);
+    // your own war is always one click away
+    const ks = GAME.myKeys(g), w = !g.conf && GAME.fronts(g).find(x => { const S = GAME.sidesOf(g, x); return ks.some(k => S.att.includes(k) || S.def.includes(k)); });
+    if (w && !el.querySelector('[data-stance]')) el.insertAdjacentHTML('afterbegin', `<div class="warbox mini"><b>⚔ ${esc(GAME.SEASONS[g.season || 0])} ${g.year}: ${w.civil ? (w.land === g.nation && g.c[g.nation].owner ? 'your uprising' : 'civil war') : 'at war'}</b>${stanceHtml(w)}</div>`);
+    el.querySelectorAll('[data-uorder]').forEach(b => b.onclick = () => {
+      const o = b.dataset.uorder;
+      if (o === 'none') unitSel = new Set(); else toast(GAME.orderUnits(g, [...unitSel], o) ? (o === 'hold' ? 'They dig in where they stand.' : 'Back on front orders.') : '');
+      refresh();
+    });
+    el.querySelectorAll('[data-stance]').forEach(b => b.onclick = () => { const [id, st] = b.dataset.stance.split('|'); const w = GAME.fronts(g).find(x => String(x.id) === id); if (w) GAME.setStance(g, w, st); toast(st === 'hold' ? 'Hold the line: your generals defend.' : 'Advance: your generals attack where they are stronger.'); refresh(); });
+  }
+  function panelMain() {
     if (g.conf) return confPanel($('panel'));
     const el = $('panel');
     const terr = g.nation && sel && g.c[sel] && g.c[sel].owner === g.nation && GAME.territories(g).find(x => x.id === sel);
@@ -769,7 +902,7 @@
         <li>Push countries past <b>${GAME.BLOC}</b> toward you to bring them into your bloc. Each adds its value to your score.</li>
         <li>Neutral and unstable countries (few ● dots) are easiest to win.</li>
         <li>Coups and invasions are fast but raise <b>tension</b>. At 100: nuclear war, everybody loses. Use <b>Détente</b> to cool things down.</li>
-        <li>Press <b>End Year</b> when you are done.</li></ul>`;
+        <li>Press <b>End Year</b> when you are done (<b>End Season</b> while your troops fight).</li></ul>`;
       bind(el); return;
     }
     const d = GAME.info(sel), c = g.c[sel], me = actor();
@@ -905,8 +1038,9 @@
       <li><b>As a superpower</b>, push countries past ${GAME.BLOC} toward you to bring them into your bloc. When ${GAME.END} ends, the bigger bloc wins, and then you can keep playing into the new century.</li>
       <li><b>As a nation</b>, build your army, keep order at home, make friends, join an alliance, and maybe invade a neighbour. Don't get overthrown.</li>
       <li><b>Propaganda</b> (1 IP) and <b>Economic Aid</b> (3 IP) pull a country toward you. A superpower can also <b>Back a Coup</b> (5 IP).</li>
-      <li><b>Wars</b> (➜): every country has an army. <b>Invade</b> to attack; take the enemy capital to weaken them. Alliances (NATO, Warsaw Pact…) defend their members.</li>
-      <li><b>Civil wars</b> (⚔): arm a side or send troops to help it win.</li>
+      <li><b>Wars</b> are fought with <b>divisions</b> on the map, season by season (<b>End Season</b> while you are at war). Your counters have a gold rim: click one (shift: add more), then <b>right-click</b> a province to march there. Marching into enemy land is an attack. Divisions you leave alone follow your generals: <b>Advance</b> or <b>Hold the line</b>. A country falls when it loses its capital and most of its land; divisions cut off from home waste away.</li>
+      <li>Alliances (NATO, Warsaw Pact…) defend their members.</li>
+      <li><b>Civil wars</b> (⚔) are fought with divisions too: the rebels hold land in their cause's colour. Arm a side or send troops to help it win.</li>
       <li><b>Tension</b> rises with coups, invasions and crises. At 100 it is nuclear war and everyone loses. <b>Détente</b> lowers it.</li></ul>`;
   }
   function start() {
@@ -942,8 +1076,9 @@
   let waiting = false;
   function endYear() {
     if (!g || g.over || waiting || !$('modal').hidden) return;
-    GAME.endYear(g); refresh();
-    if (!g.over) toast(`${g.year} begins: +${g.nation ? GAME.nationIncome(g) : GAME.income(g, g.side)} IP`);
+    const y0 = g.year;
+    GAME.endSeason(g); refresh();
+    if (!g.over) toast(g.year !== y0 ? `${g.year} begins: +${g.nation ? GAME.nationIncome(g) : GAME.income(g, g.side)} IP` : `${GAME.SEASONS[g.season || 0]} ${g.year}`);
     const wait = window.NO_ANIM || window.NO_WAIT ? 0 : Math.max(0, busyUntil - performance.now());
     if (!wait) return g.over ? gameOver() : showEvents();
     waiting = true; $('end').disabled = true;
@@ -959,7 +1094,7 @@
   $('detente').onclick = () => { if (g && g.side && GAME.detente(g, g.side)) { toast('Summit held: tension −15'); refresh(); } };
   $('help').onclick = () => { if (g) { modal(`<h1>How to play</h1>${howTo()}<button class="go" id="ok">OK</button>`); $('ok').onclick = () => { close(); showEvents(); }; } };
   const MODES = ['nat', 'pact', 'rel', 'mil', 'gov', 'stab'];
-  document.addEventListener('keydown', e => { if (e.target.tagName === 'INPUT') return; if (/^[1-6]$/.test(e.key) && $('modal').hidden) setMode(MODES[+e.key - 1]); if ((e.key === 'm' || e.key === 'M') && $('modal').hidden) setMode(MODES[(MODES.indexOf(mapMode) + 1) % MODES.length]); if (e.key === 'Enter' && $('modal').hidden) endYear(); if (e.key === 'Escape' && $('modal').hidden) { sel = null; refresh(); } });
+  document.addEventListener('keydown', e => { if (e.target.tagName === 'INPUT') return; if (/^[1-6]$/.test(e.key) && $('modal').hidden) setMode(MODES[+e.key - 1]); if ((e.key === 'm' || e.key === 'M') && $('modal').hidden) setMode(MODES[(MODES.indexOf(mapMode) + 1) % MODES.length]); if (e.key === 'Enter' && $('modal').hidden) endYear(); if (e.key === 'Escape' && $('modal').hidden) { if (unitSel.size) unitSel = new Set(); else sel = null; refresh(); } });
 
   // for the browser console and tests: ironCurtain.game is the game being played
   window.ironCurtain = { get game() { return g; }, set game(v) { g = v; }, start, refresh, zoomTo, frontField, center, select,

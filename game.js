@@ -66,7 +66,7 @@
   const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
   const rand = (lo, hi) => lo + Math.random() * (hi - lo);
   const info = key => D.BY_KEY[key];
-  const isHome = key => info(key).region === 'HOME';
+  const isHome = key => !!info(key) && info(key).region === 'HOME';
   const neighbours = (a, b) => (NB[a] || []).includes(b) || DYN.has(a + '|' + b);
   // do a's lands (itself and what it annexed) border b?
   // do the lands of state a (itself, its regions, what it annexed) border the lands of state b?
@@ -193,7 +193,7 @@
     const nation = who === 'US' || who === 'SU' ? null : who;
     const g = { side: nation ? null : who, nation, year: START, tension: 15, over: null, pending: [], news: [], c: {}, wars: [], warId: 0, pacts: [],
       ip: { US: 14, SU: 13, ME: 6 }, bonus: { US: 0, SU: 0, ME: 0 }, detenteUsed: false, homeMoves: {}, start: 0, names: {}, peace: null, formed: [], cuts: [], pw: newPw(), firsts: {},
-      reform: false, verdict: null };
+      reform: false, verdict: null, units: [], ctl: {}, unitId: 0, season: 0, stance: {} };
     for (const d of D.COUNTRIES)
       g.c[d.key] = { a: d.a, stab: d.stab, independent: !d.indep || d.indep <= START, war: null, moves: 0, army: baseArmy(d.key), puppetOf: null,
         gov: (D.GOVS || {})[d.key] || 'Republic', dev: 0, devProgress: 0, parties: null, ruling: null, owner: null, since: 0 };
@@ -231,7 +231,7 @@
     return n;
   }
   function income(g, side) {
-    let n = (side === 'SU' ? 17.3 : 8.1) + (g.pw ? g.pw[side].econ / (side === 'SU' ? 30 : 50) : 1.8);   // the Soviet planned economy starts with fewer friends but more to spend; both grow with the economy
+    let n = (side === 'SU' ? 14 : 9.4) + (g.pw ? g.pw[side].econ / (side === 'SU' ? 30 : 50) : 1.8);   // the Soviet planned economy starts with fewer friends but more to spend; both grow with the economy
     for (const d of D.COUNTRIES) if (blocOf(g, d.key) === side) n += d.val * 0.25;
     return Math.round(n);
   }
@@ -905,7 +905,8 @@
       if (isHome(k) || borders(g, k, lose)) winners.push({ key: k, pts: 25, done: false });
     }
     const conf = { att: w.att, def: w.def, win, lose, winners, claims: [], annexOk: !!w.annexOnWin && done === 'att',
-      town: TOWNS[(g.year + w.id) % TOWNS.length], year: g.year };
+      town: TOWNS[(g.year + w.id) % TOWNS.length], year: g.year,
+      held: Object.keys(g.ctl || {}).filter(id => g.ctl[id] === win).map(Number) };   // what the winner's army stands on: it may claim that, and cheaper
     conf.total = blockVal(confPool(g, conf)) || 1;
     say(g, `${info(lose).name} is defeated. The winners meet at ${conf.town} to dictate the peace.`);
     if (winners.some(x => x.key === playerKey(g)) && !g.over) { g.conf = conf; runConf(g); }
@@ -923,7 +924,8 @@
     const st = stateOf(g, k), claimed = claimedIds(conf), mine = new Set(conf.claims.filter(c => c.by === k).flatMap(c => c.ids || []));
     const pool = new Set(confPool(g, conf).filter(i => !claimed.has(i)));
     const ownsAt = id => mine.has(id) || (!pool.has(id) && !claimed.has(id) && stateOf(g, holderOf(g, id)) === st);
-    const touching = new Set([...pool].filter(id => Object.keys(PBY[id].nb).some(q => ownsAt(+q))));
+    const held = new Set(k === conf.win ? conf.held || [] : []);
+    const touching = new Set([...pool].filter(id => held.has(id) || Object.keys(PBY[id].nb).some(q => ownsAt(+q))));
     return { pool, touching };
   }
   const pieces = set => {
@@ -935,7 +937,7 @@
     }
     return n;
   };
-  const provCost = (conf, k, id) => Math.round((6 + provVal(id) * 30) * (k === conf.win ? 0.8 : 1));
+  const provCost = (conf, k, id) => Math.round((6 + provVal(id) * 30) * (k === conf.win ? 0.8 : 1) * (k === conf.win && (conf.held || []).includes(id) ? 0.6 : 1));
   const capOf = key => PROV.find(p => p.key === key && p.cap);
   // what claimant k can demand now. kinds: take (one province), annex, puppet, gov, free (a region), rep, disarm
   function confOptions(g, conf, k) {
@@ -1355,14 +1357,459 @@
 
   // ================= the end of a year =================
   const armyPower = (g, key) => g.c[key].army * (isHome(key) ? 1 : 0.8 + g.c[key].stab * 0.08);
+  // ================= divisions: wars are fought by units on provinces =================
+  // A war runs in seasons. Each side's army becomes divisions standing on provinces. A division
+  // moves one province a season; moving into a province the enemy holds is an attack. The winner
+  // of a battle takes the province, the loser falls back (or, surrounded, is destroyed). Divisions
+  // cut off from their own land lose strength. w.front (-100..100) is worked out from the land
+  // each side holds, so peace talks, the computer and the war score read it as before.
+  const SEASONS = ['Spring', 'Summer', 'Autumn', 'Winter'];
+  const DIV = 2;                                          // army points in one full-strength division
+  const MAX_DIVS = 24;
+  const SPEED = 450, WINTER = 0.6;                       // km a division covers in a season; less in winter
+  const hop = (a, b) => Math.max(150, km(PBY[a].c, PBY[b].c));                 // the way from one province to the next
+  const ctrlOf = (g, id) => (g.ctl && g.ctl[id]) || stateOf(g, holderOf(g, id));
+  // who fights in a war: the two states, and a superpower that sent troops
+  function sidesOf(g, w) {
+    const s = { att: [w.att], def: [w.def] };
+    for (const p of ['US', 'SU']) { const t = w.civil ? (w.troops[p] ? (p === w.rebels ? 'att' : 'def') : null) : w.troops[p]; if ((t === 'att' || t === 'def') && !s.att.includes(HOME[p]) && !s.def.includes(HOME[p])) s[t].push(HOME[p]); }
+    return s;
+  }
+  const FOE = { att: 'def', def: 'att' };
+  // ---- civil wars fought with divisions: the rebels are a side of their own, 'R:' + their land ----
+  const REB = key => 'R:' + key;
+  const rebLand = k => typeof k === 'string' && k.startsWith('R:') ? k.slice(2) : null;
+  function nameOf(g, k) {
+    const l = rebLand(k); if (!l) return info(k).name;
+    const w = g.c[l] && g.c[l].war;
+    return w && w.sep ? `the ${info(l).name} rebels` : 'the ' + (REBELS[w && w.ideo] || REBELS.nat).name.toLowerCase();
+  }
+  // a civil war is fought with divisions when its land has room for it (two provinces or more)
+  function civilFronts(g) {
+    const out = [];
+    for (const d of D.COUNTRIES) {
+      const c = g.c[d.key], w = c.war; if (!w) continue;
+      if (w.div === undefined) w.div = provsHeldBy(g, d.key).length >= 2;
+      if (!w.div) continue;
+      w.civil = true; w.land = d.key; w.att = REB(d.key); w.def = c.owner ? stateOf(g, c.owner) : d.key;
+      if (w.id === undefined) w.id = 'c' + (++g.warId);
+      w.capFell = w.capFell || {};
+      out.push(w);
+    }
+    return out;
+  }
+  const fronts = g => [...g.wars, ...civilFronts(g)];
+  const capOfSide = (w, s) => w.civil ? (s === 'def' ? capPid(w.land) : null) : capPid(w[s]);
+  // the player's own divisions: their state's, and the rebels' in their own rising
+  const myKeys = g => { const k = playerKey(g); return g.nation && g.c[g.nation] && g.c[g.nation].owner ? [k, REB(g.nation)] : [k]; };
+  const isMine = (g, u) => myKeys(g).includes(u.k);
+  // how strong each side of a civil war starts
+  function civilArmy(g, w, k) {
+    const c = g.c[w.land], owner = c.owner ? stateOf(g, c.owner) : null, myRising = w.land === g.nation && !!owner;
+    const gov = myRising ? g.c[owner].army * 0.8 * (isHome(owner) ? g.pw[owner === 'USA' ? 'US' : 'SU'].home / 70 : g.c[owner].stab / 3)   // against your rising the centre throws in what its grip allows
+      : owner ? (isHome(owner) ? 12 : g.c[owner].army * 0.4) : c.army;
+    if (k === w.def) return gov;
+    return myRising ? 2 + (g.militia || 0) * 2 + (g.support || 0) / 5 : gov * (0.6 + (4 - c.stab) * 0.15);
+  }
+  const civilDivs = (g, w, k) => clamp(Math.round(civilArmy(g, w, k) / DIV), 1, MAX_DIVS);
+  // the rebels start with land of their own: next to a friendly neighbour, or as far from the capital as they can get
+  function seedRebels(g, w, T) {
+    const ids = Object.keys(T.map).map(Number), cap = capPid(w.land);
+    const frac = clamp((w.sep ? 0.35 : 0.3) + SIDE[w.rebels] * (w.balance || 0) / 250, 0.15, 0.7);
+    const n = clamp(Math.round(ids.length * frac), 1, ids.length - 1);
+    const friendly = j => { const k = stateOf(g, holderOf(g, j)); if (k === w.def || k === w.land) return false; return k === HOME[w.rebels] || (!!g.c[k] && !isHome(k) && g.c[k].independent && g.c[k].a * SIDE[w.rebels] >= 30); };
+    const capC = cap !== null && T.map[cap] ? PBY[cap].c : PBY[ids[0]].c;
+    const score = id => (nbOf(id).some(friendly) ? 5000 : 0) + km(PBY[id].c, capC);
+    const seed = ids.filter(id => id !== cap).sort((a, b) => score(b) - score(a))[0];
+    if (seed === undefined) return;
+    const got = new Set([seed]);
+    while (got.size < n) {
+      const next = [...got].flatMap(nbOf).filter(j => T.map[j] && !got.has(j) && j !== cap).sort((a, b) => km(PBY[b].c, capC) - km(PBY[a].c, capC))[0];
+      if (next === undefined) break; got.add(next);
+    }
+    for (const id of got) { g.ctl[id] = w.att; T.map[id].c = w.att; T.map[id].side = 'att'; }
+  }
+  // the land of a war: every province held by a state that fights in it (a superpower's heartland only for its own side)
+  function theatre(g, w) {
+    const S = sidesOf(g, w), all = new Set([...S.att, ...S.def]), map = {};
+    if (w.civil) {
+      for (const id of provsHeldBy(g, w.land)) { const c = (g.ctl && g.ctl[id]) || w.def; map[id] = { own: w.def, c, side: c === w.att ? 'att' : S.def.includes(c) ? 'def' : null, home: false }; }
+      return { S, map };
+    }
+    for (const p of PROV) {
+      const own = stateOf(g, holderOf(g, p.id)), c = ctrlOf(g, p.id);
+      if (!all.has(own) && !all.has(c)) continue;
+      map[p.id] = { own, c, side: S.att.includes(c) ? 'att' : S.def.includes(c) ? 'def' : null, home: isHome(p.key) };
+    }
+    return { S, map };
+  }
+  const unitsOf = (g, w) => (g.units || []).filter(u => u.w === w.id);
+  const unitPower = u => u.str * Math.max(0.15, u.org) * u.q;
+  const nbOf = id => Object.keys(PBY[id].nb).map(Number);
+  const km = (a, b) => Math.hypot((a[0] - b[0]) * Math.cos((a[1] + b[1]) * Math.PI / 360), a[1] - b[1]) * 111;
+  const capPid = key => { const p = PROV.find(x => x.key === key && x.cap); return p ? p.id : null; };
+  // can a unit of this side stand on this province? (its own side's land, or the enemy's - but never an enemy superpower's heartland)
+  const canEnter = (T, side, id) => { const m = T.map[id]; return !!m && !!m.side && (m.side === side || !m.home); };
+  const quality = (g, k) => rebLand(k) ? 0.9 : isHome(k) ? 1.4 : 0.85 + g.c[k].stab * 0.06;
+  // a war's states raise their divisions (and a superpower's expedition lands)
+  function raise(g, w, T, k, n, q) {
+    const side = T.S.att.includes(k) ? 'att' : 'def', foe = FOE[side];
+    const ids = Object.keys(T.map).map(Number);
+    const touchesFoe = id => nbOf(id).some(j => T.map[j] && T.map[j].side === foe && canEnter(T, side, j));
+    let spots = ids.filter(id => T.map[id].c === k && touchesFoe(id));
+    if (!spots.length) spots = ids.filter(id => T.map[id].side === side && touchesFoe(id));            // a friend's border (troops sent abroad)
+    if (!spots.length && side === 'att' && !w.civil) {                                                 // no border at all: land on the enemy's shore
+      const home = D.CAPITALS.find(x => x.key === k), from = home ? [home.lon, home.lat] : [0, 0];
+      const shore = ids.filter(id => T.map[id].side === foe && !T.map[id].home && nbOf(id).length).sort((a, b) => km(PBY[a].c, from) - km(PBY[b].c, from))[0];
+      if (shore !== undefined) { g.ctl[shore] = k; T.map[shore].c = k; T.map[shore].side = side; spots = [shore]; say(g, `${info(k).name} lands troops in ${PBY[shore].name}.`); }
+    }
+    if (!spots.length) { const cp = rebLand(k) ? null : capPid(k); spots = cp !== null && T.map[cp] && T.map[cp].side === side ? [cp] : ids.filter(id => T.map[id].c === k).slice(0, 1); }
+    if (!spots.length) return;
+    spots.sort((a, b) => provVal(b) - provVal(a));
+    for (let i = 0; i < n; i++) g.units.push({ id: ++g.unitId, k, w: w.id, p: spots[i % spots.length], str: 1, org: 1, q, path: [], auto: true });
+  }
+  // a state's army as divisions: a full one per DIV army points
+  const divsFor = (g, k) => isHome(k) ? 10 : clamp(Math.round(g.c[k].army / DIV), 1, MAX_DIVS);
+  function muster(g, w, T) {
+    w.raised = w.raised || {}; w.base = w.base || {};
+    if (w.civil && !w.raised[w.att]) seedRebels(g, w, T);
+    for (const side of ['att', 'def']) for (const k of T.S[side]) {
+      if (w.raised[k]) continue;
+      w.raised[k] = true;
+      const helper = isHome(k) && k !== w.att && k !== w.def;                              // a superpower's expedition: few, but the best
+      const before = g.units.length;
+      const n = helper ? 8 : w.civil ? civilDivs(g, w, k) : divsFor(g, k);
+      w.base[k] = n;
+      raise(g, w, T, k, n, quality(g, k));
+      const made = g.units.length - before;
+      if (!w.civil && !isHome(k) && made) for (const u of g.units.slice(before)) u.str = clamp(g.c[k].army / (made * DIV), 0.3, 1);
+    }
+  }
+  // breadth-first steps through the provinces a side may use
+  function bfs(T, side, from, ok) {
+    const dist = {}, open = [];
+    for (const id of from) { dist[id] = 0; open.push(id); }
+    for (let i = 0; i < open.length; i++) {
+      const id = open[i];
+      for (const j of nbOf(id)) if (dist[j] === undefined && ok(j)) { dist[j] = dist[id] + 1; open.push(j); }
+    }
+    return dist;
+  }
+  // the way for one division to a province, through any province its side may enter
+  function route(T, side, from, to) {
+    if (from === to) return [];
+    if (!canEnter(T, side, to)) return null;
+    const dist = bfs(T, side, [to], j => canEnter(T, side, j));
+    if (dist[from] === undefined) return null;
+    const path = []; let at = from;
+    while (at !== to) {
+      const next = nbOf(at).filter(j => dist[j] !== undefined).sort((a, b) => dist[a] - dist[b])[0];
+      if (next === undefined || dist[next] >= dist[at]) return null;
+      path.push(next); at = next;
+    }
+    return path;
+  }
+  // the computer's generals (and the player's divisions left on front orders)
+  function plan(g, w, T, side, units, stance) {
+    const foe = FOE[side], at = {}, foeAt = {};
+    let ours = 0, theirs = 0;
+    for (const u of unitsOf(g, w)) {
+      const mineU = T.S[side].includes(u.k), m = mineU ? at : foeAt;
+      m[u.p] = (m[u.p] || 0) + unitPower(u);
+      if (mineU) ours += unitPower(u); else theirs += unitPower(u);
+    }
+    const foeCap = capOfSide(w, foe), capC = foeCap !== null ? PBY[foeCap].c : null;
+    const mine = id => T.map[id] && T.map[id].side === side;
+    const enemyLand = id => T.map[id] && T.map[id].side === foe && canEnter(T, side, id);
+    // the attacker presses on; the defender, or whoever is weaker, waits for a clear chance
+    // a quiet front makes generals bolder: every season without a battle lowers the bar a little
+    const need = stance === 'hold' ? Infinity : (ours < theirs * 0.7 ? 1.6 : 1) * (side === 'att' ? 0.85 : 1.15) * Math.max(0.55, 1 - (w.quiet || 0) * 0.06);
+    const free = units.filter(u => u.org >= 0.35 && !u.cut);              // a division cut off makes its way back first
+    const used = new Set();
+    for (const u of units) u.path = [];
+    // garrisons: the last division in a province the enemy stands next to stays there (always in the capital)
+    const myCap = capOfSide(w, side), staying = {};
+    for (const u of units) staying[u.p] = (staying[u.p] || 0) + 1;
+    const threat = id => nbOf(id).reduce((s, j) => s + (foeAt[j] || 0), 0);
+    const mayLeave = u => staying[u.p] > 1 || (threat(u.p) === 0 && !(u.p === myCap && Object.keys(foeAt).some(j => nbOf(+j).some(x => nbOf(x).includes(myCap) || x === myCap))));
+    const leave = u => { used.add(u); staying[u.p]--; };
+    // 1. take what nobody defends; 2. attack where we are clearly stronger (the capital and our own lost land first)
+    const ownLand = id => T.S[side].includes(T.map[id].own);
+    const worth = id => provVal(id) * (id === foeCap ? 4 : 1) + (capC ? 30 / (1 + km(PBY[id].c, capC) / 300) : 0) + (ownLand(id) ? 6 : 0);
+    const targets = [...new Set(free.flatMap(u => nbOf(u.p)).filter(enemyLand))].sort((a, b) => worth(b) - worth(a));
+    for (const t of targets) {
+      const near = free.filter(u => !used.has(u) && nbOf(u.p).includes(t));
+      if (!near.length) continue;
+      const def = (foeAt[t] || 0) * 1.3;
+      if (!def) {
+        if (stance === 'hold' && !ownLand(t)) continue;                   // holding: only take back our own land
+        const u = near.filter(mayLeave).sort((a, b) => (at[b.p] || 0) - (at[a.p] || 0))[0]; if (!u) continue;
+        leave(u); u.path = [t]; at[u.p] -= unitPower(u); continue;
+      }
+      let pow = 0; const go = [];
+      // the attack only takes divisions that are not the last guard of a threatened province (or of the capital)
+      const spare = near.filter(u => u.p !== myCap || staying[u.p] > 1).sort((a, b) => unitPower(b) - unitPower(a));
+      const cnt = {}; for (const u of spare) { cnt[u.p] = (cnt[u.p] || 0) + 1; }
+      for (const u of spare) {
+        const rest = staying[u.p] - (go.filter(x => x.p === u.p).length) - 1, onlyFoe = nbOf(u.p).every(j => j === t || !foeAt[j]);
+        if (rest < 1 && !onlyFoe) continue;                                // someone else is waiting next door: stay
+        go.push(u); pow += unitPower(u); if (pow >= def * need * 1.3) break;
+      }
+      if (pow < def * need) continue;
+      for (const u of go) { leave(u); u.path = [t]; at[u.p] -= unitPower(u); }      // an attack: they move in only if they win (see fight)
+    }
+    // cut off: back toward our own land, fighting through if it must
+    const home = Object.keys(T.map).map(Number).filter(id => mine(id) && T.S[side].includes(T.map[id].own));
+    const homeDist = home.length ? bfs(T, side, home, j => canEnter(T, side, j)) : {};
+    for (const u of units) if (u.cut && !used.has(u)) {
+      const next = nbOf(u.p).filter(j => homeDist[j] !== undefined && homeDist[j] < homeDist[u.p]).sort((a, b) => (foeAt[a] || 0) - (foeAt[b] || 0))[0];
+      if (next !== undefined) { used.add(u); u.path = [next]; }
+    }
+    // 3. everyone else: to the front, where the enemy presses hardest against too few of ours
+    const front = Object.keys(T.map).map(Number).filter(id => mine(id) && nbOf(id).some(enemyLand));
+    if (!front.length) return;
+    const press = id => nbOf(id).reduce((s, j) => s + (foeAt[j] || 0), 0) + 0.3 - (at[id] || 0);
+    const weak = front.filter(id => press(id) > 0);
+    const dist = bfs(T, side, weak.length ? weak : front, mine);
+    for (const u of units) {
+      if (used.has(u) || dist[u.p] === undefined) continue;
+      if (dist[u.p] === 0) {                                             // on the line: too many of us here? one moves along to a weak neighbour
+        const n = press(u.p) < -0.6 && mayLeave(u) ? nbOf(u.p).find(j => weak.includes(j) && press(j) > 0) : undefined;
+        if (n !== undefined) { leave(u); u.path = [n]; at[u.p] -= unitPower(u); at[n] = (at[n] || 0) + unitPower(u); }
+        continue;
+      }
+      const next = nbOf(u.p).filter(j => dist[j] !== undefined && dist[j] < dist[u.p]).sort((a, b) => dist[a] - dist[b])[0];
+      if (next !== undefined && mayLeave(u)) { leave(u); u.path = [next]; }
+    }
+  }
+  // one season of fighting in every war between countries
+  function warSeason(g) {
+    g.units = g.units || []; g.ctl = g.ctl || {}; g.unitId = g.unitId || 0; g.battles = [];
+    tidyWar(g);
+    const mine = myKeys(g);
+    for (const w of fronts(g)) {
+      const T = theatre(g, w);
+      muster(g, w, T);
+      // help from outside: weapons patch up the side's divisions
+      for (const side of ['att', 'def']) {
+        const hk = w.civil ? (side === 'att' ? w.rebels : OTHER[w.rebels]) : side;     // a civil war's help is counted by camp
+        if (!(w.help[hk] > 0)) continue;
+        for (const u of unitsOf(g, w)) if (T.S[side].includes(u.k)) { u.str = Math.min(1, u.str + w.help[hk] * 0.004); u.org = Math.min(1, u.org + 0.2); }
+        w.help[hk] = 0;
+      }
+      // orders: the computer's, and the player's divisions on front orders
+      for (const side of ['att', 'def']) {
+        const auto = unitsOf(g, w).filter(u => T.S[side].includes(u.k) && (u.auto || !mine.includes(u.k)));
+        const stance = mine.some(k => T.S[side].includes(k)) ? ((g.stance || {})[w.id] || 'advance') : 'advance';
+        plan(g, w, T, side, auto, stance);
+      }
+      // the player's own orders: find the way again around what changed
+      for (const u of unitsOf(g, w)) if (!u.auto && mine.includes(u.k) && u.goal !== undefined && u.goal !== null) {
+        if (u.p === u.goal) { u.goal = null; u.path = []; continue; }
+        const r = route(T, T.S.att.includes(u.k) ? 'att' : 'def', u.p, u.goal); u.path = r || []; if (!r) u.goal = null;
+      }
+      w.quiet = (w.quiet || 0) + 1;
+      fight(g, w, T);
+      supply(g, w, T);
+      measure(g, w, T);
+    }
+    // a war ends when one side is beaten, or after enough years: a truce
+    for (const w of fronts(g)) {
+      const done = w.outcome; if (!done) continue;
+      delete w.outcome;
+      if (w.civil) civilEnd(g, w.land, done === 'att' ? w.rebels : done === 'def' ? OTHER[w.rebels] : null);
+      else endWar(g, w, done);
+      if (g.over) return;
+    }
+    tidyWar(g);
+  }
+  // moves and battles
+  function fight(g, w, T) {
+    const sideOfU = u => T.S.att.includes(u.k) ? 'att' : 'def';
+    // moves inside our own land first, then the attacks, province by province
+    const attacks = {};
+    for (const u of unitsOf(g, w)) {
+      const next = u.path && u.path[0];
+      if (next === undefined) continue;
+      const side = sideOfU(u);
+      if (!canEnter(T, side, next) || !nbOf(u.p).includes(next)) { u.path = []; continue; }
+      // on the march: a big province takes more than one season to cross
+      if (u.to !== next) { u.to = next; u.mv = 0; }
+      u.mv += SPEED * (isHome(u.k) ? 1.2 : 1) * ((g.season || 0) === 3 ? WINTER : 1);
+      if (u.mv < hop(u.p, next)) continue;
+      if (T.map[next].side === side) { u.p = next; u.path.shift(); u.to = null; u.mv = 0; u.org = Math.max(0, u.org - 0.03); continue; }
+      if (u.org < 0.25) { u.path = []; continue; }                       // too worn out to attack
+      (attacks[next] = attacks[next] || []).push(u);
+    }
+    const town = id => (PBY[id].towns && PBY[id].towns[0]) || PBY[id].name;
+    // battles first (provinces with defenders), then the walk-ins; a division that is attacked fights where it stands
+    const held = id => unitsOf(g, w).some(u => u.p === +id && sideOfU(u) !== sideOfU(attacks[id][0]));
+    const order = Object.keys(attacks).sort((a, b) => held(b) - held(a));
+    const engaged = new Set();
+    for (const id of order) {
+      const t = +id, A = attacks[id].filter(u => g.units.includes(u) && !engaged.has(u) && u.path[0] === t && nbOf(u.p).includes(t) && u.str > 0);
+      if (!A.length) continue;
+      if (T.map[t].side === sideOfU(A[0])) { for (const u of A) { u.p = t; u.path.shift(); u.to = null; u.mv = 0; } continue; }
+      const side = sideOfU(A[0]), foe = FOE[side];
+      const D0 = unitsOf(g, w).filter(u => u.p === t && sideOfU(u) === foe && u.str > 0);
+      for (const u of D0) { engaged.add(u); u.path = []; }
+      const take = () => {
+        const back = T.S[side].includes(T.map[t].own);                   // our own land comes back to us
+        if (back) delete g.ctl[t]; else g.ctl[t] = w[side];
+        T.map[t].c = back ? T.map[t].own : w[side]; T.map[t].side = side;
+        const from = {}; for (const u of A) from[u.p] = (from[u.p] || 0) + 1;
+        const guard = u => unitsOf(g, w).filter(x => x.p === u.p && !A.includes(x)).length === 0 && nbOf(u.p).some(j => j !== t && T.map[j] && T.map[j].side === foe);
+        let moved = 0;
+        for (const u of A) { if (A.length > 1 && from[u.p] === 1 && guard(u) && moved < A.length - 1 && A.some(x => x !== u && !guard(x))) { u.path = []; continue; } u.p = t; u.path.shift(); u.to = null; u.mv = 0; u.org = Math.max(0, u.org - 0.08); moved++; }
+        if (t === capOfSide(w, foe)) say(g, w.civil ? `${town(t)} falls to ${nameOf(g, w.att)}!` : `${town(t)} falls! ${info(w[side]).name} takes the capital of ${info(w[foe]).name}.`);
+        else if (back && PBY[t].cap) say(g, `${w.civil ? 'The government' : info(w[side]).name} retakes ${town(t)}.`);
+      };
+      if (!D0.length) { take(); continue; }
+      const allyBonus = foe === 'def' && !w.civil ? 1 + allyHelp(g, w.def, w.att) / 120 : 1;
+      let pa = A.reduce((s, u) => s + unitPower(u), 0) * rand(0.8, 1.2);
+      const pd = D0.reduce((s, u) => s + unitPower(u), 0) * 1.3 * (PBY[t].cap ? 1.25 : 1) * allyBonus * rand(0.8, 1.2);
+      pa *= 1 + (new Set(A.map(u => u.p)).size - 1) * 0.15;                // attacked from more sides, the defence cracks sooner
+      const r = pa / Math.max(0.01, pd);
+      for (const u of A) { u.org = Math.max(0, u.org - clamp(0.3 / r, 0.08, 0.6)); u.str = Math.max(0, u.str - clamp(0.06 / r, 0.02, 0.2)); }
+      for (const u of D0) { u.org = Math.max(0, u.org - clamp(0.3 * r, 0.08, 0.6)); u.str = Math.max(0, u.str - clamp(0.06 * r, 0.02, 0.2)); }
+      const won = r > 1;
+      g.battles.push({ p: t, w: w.id, att: w[side], won }); w.quiet = 0;
+      if (!won) { for (const u of A) { u.path = []; u.to = null; u.mv = 0; } continue; }
+      // the defenders fall back to a province of their own side, away from the attackers; with nowhere to go they are destroyed
+      for (const u of D0) {
+        const exposed = j => nbOf(j).filter(x => T.map[x] && T.map[x].side === side).length;
+        const back = nbOf(t).filter(j => T.map[j] && T.map[j].side === foe && !attacks[j]).sort((a, b) => exposed(a) - exposed(b))[0];
+        if (back === undefined) { u.str = 0; say(g, `A division of ${nameOf(g, u.k)} is surrounded at ${PBY[t].name} and destroyed.`); }
+        else { u.p = back; u.path = []; u.to = null; u.mv = 0; u.org = Math.max(0, u.org - 0.15); }
+      }
+      take();
+    }
+  }
+  // supply: a division joined to its own land through its side's provinces is fed; one cut off wastes away
+  function supply(g, w, T) {
+    for (const side of ['att', 'def']) {
+      const sources = Object.keys(T.map).map(Number).filter(id => T.map[id].side === side && (T.S[side].includes(T.map[id].own) || (w.civil && side === 'att')));
+      const reach = bfs(T, side, sources, j => T.map[j] && T.map[j].side === side);
+      for (const u of unitsOf(g, w)) {
+        if (!T.S[side].includes(u.k)) continue;
+        if (reach[u.p] !== undefined) { u.org = Math.min(1, u.org + 0.25); u.str = Math.min(1, u.str + (isHome(u.k) ? 0.05 : 0.03 + ((g.c[u.k] && g.c[u.k].stab) || 2) * 0.005)); u.cut = false; }
+        else { u.org = Math.max(0, u.org - 0.2); u.str = Math.max(0, u.str - 0.08); u.cut = true; }
+      }
+    }
+    g.units = g.units.filter(u => u.str > 0.04);
+    // every spring a side that lost many divisions raises fresh ones
+    if ((g.season || 0) === 0) for (const side of ['att', 'def']) for (const k of T.S[side]) {
+      if (isHome(k) && k !== w.att && k !== w.def) continue;
+      const have = g.units.filter(u => u.w === w.id && u.k === k).length, want = Math.ceil(((w.base && w.base[k]) || divsFor(g, k)) * 0.6);
+      if (have >= want || have === 0 || (!isHome(k) && !rebLand(k) && g.c[k].army < 1)) continue;
+      const before = g.units.length;
+      raise(g, w, T, k, 1, quality(g, k));
+      for (const u of g.units.slice(before)) { u.str = 0.5; u.org = 0.6; }
+    }
+    // a state's army is what its divisions add up to
+    for (const k of [w.att, w.def]) if (!isHome(k) && !rebLand(k) && (!w.civil || k === w.land)) g.c[k].army = g.units.filter(u => u.k === k).reduce((s, u) => s + u.str * DIV, 0);
+  }
+  // where the war stands: how much of each side's land the other holds
+  function measure(g, w, T) {
+    const tot = { att: 0, def: 0 }, lost = { att: 0, def: 0 };
+    for (const id in T.map) {
+      const m = T.map[id], side = T.S.att.includes(m.own) ? 'att' : T.S.def.includes(m.own) ? 'def' : null;
+      if (!side || m.home) continue;
+      const v = provVal(+id); tot[side] += v; if (m.side && m.side !== side) lost[side] += v;
+    }
+    const share = s => tot[s] ? lost[s] / tot[s] : 0;
+    w.held = { att: share('def'), def: share('att') };                 // what each side holds of the other's land
+    w.prev = w.front;
+    w.front = clamp(Math.round((w.held.att - w.held.def) * 160), -100, 100);
+    for (const s of ['att', 'def']) { const cp = capOfSide(w, s); w.capFell[s] = cp !== null && !!T.map[cp] && T.map[cp].side === FOE[s]; }
+    if (w.civil) {                                                       // the rebels win by taking the capital and half the land (a region: 60%); the government by destroying them
+      w.balance = SIDE[w.rebels] * Math.round((share('def') * 2 - 1) * 100);
+      const left = s => unitsOf(g, w).filter(u => u.k === w[s]).length;
+      if (w.raised && w.raised[w.att] && left('att') === 0) w.outcome = 'def';
+      else if (w.raised && w.raised[w.def] && left('def') === 0) w.outcome = 'att';
+      else if (w.sep ? share('def') >= 0.6 : (w.capFell.def && share('def') >= 0.5) || share('def') >= 0.8) w.outcome = 'att';
+      else if (w.years >= 10) w.outcome = 'truce';
+      return;
+    }
+    const left = s => unitsOf(g, w).filter(u => u.k === w[s]).length;
+    const wiped = s => left(s) === 0 && !!(w.raised && w.raised[w[s]]);
+    const beaten = s => wiped(s) || (!isHome(w[s]) && ((w.capFell[s] && share(s) >= 0.6) || share(s) >= 0.85));
+    if (beaten('def')) w.outcome = 'att';
+    else if (beaten('att')) w.outcome = 'def';
+    else if (w.limited && share('def') >= 0.15 && w.years >= 1) w.outcome = 'att';
+    else if (w.years >= (w.limited ? 3 : 8)) w.outcome = 'truce';
+  }
+  // the divisions of a war that is over go home; occupied provinces go back
+  function tidyWar(g) {
+    if (!g.units) return;
+    const all = fronts(g), live = new Set(all.map(w => w.id));
+    g.units = g.units.filter(u => live.has(u.w));
+    const foes = new Set();
+    for (const w of all) { const S = sidesOf(g, w); for (const a of S.att) for (const b of S.def) { foes.add(a + '|' + b); foes.add(b + '|' + a); } }
+    for (const id in g.ctl) { const own = stateOf(g, holderOf(g, +id)), c = g.ctl[id]; if (c === own || !foes.has(c + '|' + own)) delete g.ctl[id]; }
+  }
+  // is the player in a war? (then the year runs season by season)
+  const playerFights = g => { const ks = myKeys(g); return fronts(g).some(w => { const S = sidesOf(g, w); return ks.some(k => S.att.includes(k) || S.def.includes(k)); }); };
+  // the player's orders: a province to march to, 'hold' (stay put) or 'auto' (front orders: the generals decide)
+  function orderUnits(g, ids, goal) {
+    let n = 0;
+    for (const u of (g.units || []).filter(x => ids.includes(x.id) && isMine(g, x))) {
+      const w = fronts(g).find(x => x.id === u.w); if (!w) continue;
+      if (goal === 'auto') { u.auto = true; u.goal = null; u.path = []; n++; continue; }
+      if (goal === 'hold') { u.auto = false; u.goal = null; u.path = []; n++; continue; }
+      const T = theatre(g, w), r = route(T, T.S.att.includes(u.k) ? 'att' : 'def', u.p, goal); if (!r) continue;
+      u.auto = false; u.goal = goal; u.path = r; n++;
+    }
+    return n;
+  }
+  const marchShare = u => u.to !== null && u.to !== undefined && u.mv ? Math.min(0.85, u.mv / hop(u.p, u.to)) : 0;
+  function setStance(g, w, s) { g.stance = g.stance || {}; g.stance[w.id] = s; }
+  // one season for a player at war; the rest of the year happens when the winter is over
+  function endSeason(g) {
+    if (g.over || g.pending.length || g.peace || g.conf) return;
+    if (!playerFights(g)) return endYear(g);
+    warSeason(g); if (g.over) return;
+    g.season = (g.season || 0) + 1;
+    if (g.season >= 4 && !g.conf) endYear(g);
+  }
+  // a civil war is over. winner: the camp that won ('US' / 'SU'), or null for a truce
+  function civilEnd(g, key, winner) {
+    const c = g.c[key], w = c.war, d = info(key); if (!w) return;
+    for (const p of ['US', 'SU']) if (w.troops[p]) g.bonus[p] += winner === p ? 3 : -5;   // a lost war abroad is a humiliation
+    if (c.owner) {                                                        // a region's war of independence
+      const ow = c.owner;
+      if (winner && winner === w.rebels) {
+        c.war = null; freeUnion(g, d.key, SIDE[winner] * 40); say(g, `${d.name} wins its war of independence against ${info(ow).name}!`);
+        if (d.key === g.nation) { g.bonus.ME += 8; g.c[d.key].army = Math.max(g.c[d.key].army, 3 + (g.militia || 0)); say(g, 'Your nation is free!'); }
+      } else {
+        c.war = null; c.stab = 2; say(g, `${info(ow).name} crushes the uprising in ${d.name}.`);
+        if (d.key === g.nation) { if (winner) overthrow(g, `${info(ow).name}'s troops crush your uprising. Its leaders are shot or sent away.`); else g.support = Math.max(0, (g.support || 0) - 20); }
+      }
+      return;
+    }
+    const R = REBELS[w.ideo] || REBELS[w.rebels === 'SU' ? 'com' : 'nat'];
+    c.a = winner ? (winner === w.rebels ? R.a : SIDE[winner] * 70) : Math.round(w.balance * 0.4);
+    c.war = null; c.stab = 2;
+    if (winner && winner === w.rebels) {                                  // the rebels build the state they fought for
+      takePower(g, d.key, w.ideo === 'con' ? 'con' : w.ideo || (winner === 'SU' ? 'com' : 'nat')); boostParty(g, d.key, c.ruling, 20);
+      c.gov = R.gov;
+    }
+    say(g, winner === w.rebels ? `${d.name}: the ${R.name.toLowerCase()} win the civil war. The new state: ${R.gov === 'Revolutionary' ? 'a revolutionary republic' : R.gov === 'Socialist' ? 'a socialist one-party state' : R.gov.toLowerCase()}.` : winner ? `${d.name}: the government defeats the ${R.name.toLowerCase()}.` : `${d.name}: the civil war ends in a truce.`);
+    if (d.key === g.nation && winner === w.rebels) overthrow(g, 'The rebels march into your capital. Your government has fallen.');
+  }
   function endYear(g) {
     if (g.over || g.pending.length || g.peace || g.conf) return;
+    // ---- wars between countries: the seasons the player did not play one by one ----
+    while ((g.season || 0) < 4) { warSeason(g); if (g.over) return; g.season = (g.season || 0) + 1; if (g.conf) return; }
+    g.season = 0;
+    for (const w of g.wars) w.years++;
     runCabinet(g);
     for (const side of ['US', 'SU']) if (side !== g.side) computerTurn(g, side);
     // ---- civil wars ----
     for (const d of D.COUNTRIES) {
       const c = g.c[d.key], w = c.war; if (!w) continue;
       w.years++;
+      if (w.div) continue;                                                  // fought with divisions, season by season
       const rebelsPush = SIDE[w.rebels] * ((4 - c.stab) * 2 + (d.key === g.nation && c.owner ? (g.militia || 0) * 0.8 + (g.support || 0) / 10 : 0));   // shaky governments lose ground; in the player's own rising the militia and popular support fight too
       const troops = (w.troops.US ? 25 : 0) - (w.troops.SU ? 25 : 0);
       const govArmy = c.owner ? (isHome(stateOf(g, c.owner)) ? 12 : g.c[stateOf(g, c.owner)].army * 0.4) : c.army;   // a region is held by its owner's army
@@ -1373,63 +1820,9 @@
       w.balance = clamp(w.balance + (w.help.US - w.help.SU) + troops + rebelsPush + army * 0.3 + crackdown + rand(-12, 12), -100, 100);
       w.help = { US: 0, SU: 0 };
       const won = w.sep ? 70 : 100;                                         // a region needs less to break free than rebels need to take a capital
-      if (Math.abs(w.balance) >= won || w.years >= 10) {
-        const winner = w.balance >= won ? 'US' : w.balance <= -won ? 'SU' : null;
-        for (const p of ['US', 'SU']) if (w.troops[p]) g.bonus[p] += winner === p ? 3 : -5;   // a lost war abroad is a humiliation
-        if (c.owner) {                                                        // a region's war of independence
-          const ow = c.owner;
-          if (winner && winner === w.rebels) {
-            c.war = null; freeUnion(g, d.key, SIDE[winner] * 40); say(g, `${d.name} wins its war of independence against ${info(ow).name}!`);
-            if (d.key === g.nation) { g.bonus.ME += 8; g.c[d.key].army = Math.max(g.c[d.key].army, 3 + (g.militia || 0)); say(g, 'Your nation is free!'); }
-          } else {
-            c.war = null; c.stab = 2; say(g, `${info(ow).name} crushes the uprising in ${d.name}.`);
-            if (d.key === g.nation) { if (winner) overthrow(g, `${info(ow).name}'s troops crush your uprising. Its leaders are shot or sent away.`); else g.support = Math.max(0, (g.support || 0) - 20); }
-          }
-          continue;
-        }
-        const R = REBELS[w.ideo] || REBELS[w.rebels === 'SU' ? 'com' : 'nat'];
-        c.a = winner ? (winner === w.rebels ? R.a : SIDE[winner] * 70) : Math.round(w.balance * 0.4);
-        c.war = null; c.stab = 2;
-        if (winner && winner === w.rebels) {                                  // the rebels build the state they fought for
-          takePower(g, d.key, w.ideo === 'con' ? 'con' : w.ideo || (winner === 'SU' ? 'com' : 'nat')); boostParty(g, d.key, c.ruling, 20);
-          c.gov = R.gov;
-        }
-        say(g, winner === w.rebels ? `${d.name}: the ${R.name.toLowerCase()} win the civil war. The new state: ${R.gov === 'Revolutionary' ? 'a revolutionary republic' : R.gov === 'Socialist' ? 'a socialist one-party state' : R.gov.toLowerCase()}.` : winner ? `${d.name}: the government defeats the ${R.name.toLowerCase()}.` : `${d.name}: the civil war ends in a truce.`);
-        if (d.key === g.nation && winner === w.rebels) overthrow(g, 'The rebels march into your capital. Your government has fallen.');
-      }
+      if (Math.abs(w.balance) >= won || w.years >= 10) civilEnd(g, d.key, w.balance >= won ? 'US' : w.balance <= -won ? 'SU' : null);
     }
     if (g.over) return;
-    // ---- wars between countries ----
-    for (const w of g.wars.slice()) {
-      w.years++;
-      const pa = armyPower(g, w.att) * (w.capFell.att ? 0.7 : 1) + w.help.att;
-      const pd = armyPower(g, w.def) * 1.15 * (w.capFell.def ? 0.7 : 1) + w.help.def + allyHelp(g, w.def, w.att);
-      let d = (pa - pd) * 0.9 + rand(-16, 16);
-      for (const p of ['US', 'SU']) if (w.troops[p]) d += w.troops[p] === 'att' ? 25 : -25;
-      w.prev = w.front;                                                       // where the front stood a year ago (the map draws the advance)
-      w.front = clamp(w.front + d * 2.2 + (w.lastD || 0) * 0.8, -100, 100);   // momentum: a winning side keeps winning
-      w.lastD = d;
-      // the fighting costs both armies
-      g.c[w.att].army = Math.max(0, g.c[w.att].army - pd * 0.06);
-      g.c[w.def].army = Math.max(0, g.c[w.def].army - pa * 0.06);
-      w.help = { att: 0, def: 0 }; w.armed = {};
-      // capitals
-      for (const [side, other, reach] of [['def', 'att', w.front], ['att', 'def', -w.front]]) {
-        const key = w[side];
-        if (isHome(key)) continue;
-        if (!w.capFell[side] && reach >= CAPITAL_AT) {
-          w.capFell[side] = true; g.c[key].army *= 0.75; w.front += side === 'def' ? 10 : -10;
-          say(g, `${capitalName(key)} falls! ${info(w[other]).name} takes the capital of ${info(key).name}.`);
-        } else if (w.capFell[side] && reach < CAPITAL_AT - 15) {
-          w.capFell[side] = false; say(g, `${info(key).name} retakes ${capitalName(key)}.`);
-        }
-      }
-      w.front = clamp(w.front, -100, 100);
-      const done = w.front >= 100 || g.c[w.def].army < 0.5 ? 'att' : w.front <= -100 || g.c[w.att].army < 0.5 ? 'def' : w.years >= (w.limited ? 3 : 8) ? 'truce' : null;
-      if (!done) continue;
-      endWar(g, w, done);
-      if (g.over) return;
-    }
     makeOffer(g);
     // ---- rivals in opposite camps sometimes fight (unless the target has strong allies) ----
     if (g.wars.length < 3) for (const [x, y] of RIVALS) {
@@ -1492,7 +1885,10 @@
         // the ceasefire line runs through every land of the loser that touches the winner (not a superpower's heartland)
         syncBorders(g);
         const winLands = landsOf(g, ahead), lands = landsOf(g, behind).filter(k => !isHome(k) && winLands.some(j => neighbours(k, j)));
-        const got = (lands.length ? lands : [behind]).flatMap(k => cutLand(g, k, ahead, Math.abs(w.front) / 100 * 0.8));
+        // the ceasefire line runs where the armies stand
+        const S = sidesOf(g, w), side = ahead === w.att ? 'att' : 'def';
+        const held = k => { const ids = provsHeldBy(g, k); return ids.length ? ids.filter(i => g.ctl && S[side].includes(g.ctl[i])).length / ids.length : 0; };
+        const got = (lands.length ? lands : [behind]).filter(k => held(k) >= 0.05).flatMap(k => cutLand(g, k, ahead, clamp(held(k), 0.05, 0.6)));
         say(g, got.length ? `${A} and ${Dn} sign a truce. The ceasefire line becomes the new border: ${info(ahead).name} keeps ${provList(got)}.` : `${A} and ${Dn} sign a truce. The old border stays.`);
       } else say(g, `${A} and ${Dn} sign a truce. Nobody wins.`);
       return;
@@ -1528,5 +1924,5 @@
     newGame, check, act, homeCheck, homeAct, warOf, warCheck, warHelp, makePeace, deployed, detente, endYear, choose,
     score, income, nationScore, nationIncome, friendsOf, puppetsOf, pactsOf, allied, blocOf, leaning, isHome, info, neighbours,
     borders, landsOf, capitalName, computerTurn, baseArmy, valueOf, PARTIES, PARTY, partyCheck, partyAct,
-    PUSH_CAP, isUnionPart, regionsOf, free, judge, finish, sovietWeak, POLICIES, TERR_ACTIONS, territories, territoryCheck, territoryAct, lostLand, takenLand, PROV, PBY, holderOf, provVal, provList, landBlock, cutLand, fixCuts, syncBorders, PEACE_TERMS, termsFor, peaceChance, proposePeace, confView, confDemand, confPass, confAuto, startConference, formCheck, form, ownedBy, stateOf, applyNames, playerKey, warScore };
+    PUSH_CAP, isUnionPart, regionsOf, free, judge, finish, sovietWeak, POLICIES, TERR_ACTIONS, territories, territoryCheck, territoryAct, lostLand, takenLand, PROV, PBY, holderOf, SEASONS, DIV, ctrlOf, sidesOf, theatre, unitsOf, route, capPid, orderUnits, setStance, endSeason, playerFights, warSeason, startWar, marchShare, fronts, nameOf, myKeys, isMine, rebLand, civilWar, provVal, provList, landBlock, cutLand, fixCuts, syncBorders, PEACE_TERMS, termsFor, peaceChance, proposePeace, confView, confDemand, confPass, confAuto, startConference, formCheck, form, ownedBy, stateOf, applyNames, playerKey, warScore };
 })(typeof window !== 'undefined' ? window : globalThis);

@@ -25,7 +25,7 @@
     <div id="tip" hidden></div>
     <div id="legend">
       <div class="modes"><button data-mode="nat" class="on" title="Every country in its own colour (1)">Nations</button><button data-mode="pact" title="Alliances (2)">Alliances</button><button data-mode="rel" title="How the world sees you (3)">Relations</button><button data-mode="mil" title="Army sizes (4)">Military</button><button data-mode="gov" title="Kinds of government (5)">Government</button><button data-mode="stab" title="Stability (6)">Stability</button></div>
-      <div class="keys"><span id="legend-dyn"></span><span><i class="hatch"></i>Colony</span><span>⚔ Civil war</span><span style="color:#ffa040">➜ War</span></div>
+      <div class="keys"><span id="legend-dyn"></span><span><i class="hatch"></i>Colony</span><span>⚔ Civil war</span><span><i class="occ"></i>Occupied</span><span style="color:#e8c45a">▣ Divisions</span></div>
     </div>
     <ol id="news"></ol>
   </section>
@@ -69,6 +69,10 @@ if(location.hash.includes('confit')){ const g=ironCurtain.game, me=g.nation||'US
   g.wars=[]; const w={id:99,att:me,def:foe,front:100,years:3,help:{att:0,def:0},troops:{SU:location.hash.includes('withsu')?'att':null},armed:{},capFell:{}};
   GAME.startConference(g,w,'att'); ironCurtain.refresh(); ironCurtain.select(foe); ironCurtain.zoomTo(foe);
   if(location.hash.includes('claim2')){ for(let k=0;k<2;k++){ const v=GAME.confView(g); const o=v.options.find(x=>x.kind==='take'&&x.ok); if(o) GAME.confDemand(g,o.id); } ironCurtain.refresh(); } }
+const dv=location.hash.match(/divs=(\w+):(\w+):(\d+)/); if(dv){ const g=ironCurtain.game; g.wars=[]; g.units=[]; g.ctl={}; for(const k of [dv[1],dv[2]]) g.c[k].war=null; g.pending=[];
+  const w=GAME.startWar(g,dv[1],dv[2],0);  for(let i=0;i<+dv[3];i++){ GAME.warSeason(g); g.season=(g.season+1)%4; } {const d=document.createElement("pre");d.style.cssText="position:fixed;bottom:0;right:0;z-index:99;background:#000;color:#0f0;font-size:11px;margin:0";d.textContent="ctl "+JSON.stringify(g.ctl)+" held "+JSON.stringify(w.held);document.body.appendChild(d);} document.title="DBG "+w.quiet+" "+g.units.map(u=>u.p+":"+(u.path[0])+":"+u.mv).slice(0,2).join(" ")+" "+JSON.stringify(g.stance)+" "+Object.keys(g.ctl).length; ironCurtain.refresh();
+  if(location.hash.includes('pickme')){ const el=[...document.querySelectorAll('g.div.mine')][0]; if(el) el.dispatchEvent(new MouseEvent('click',{bubbles:true})); }
+  if(location.hash.includes('order')){ const me=GAME.playerKey(g), u=g.units.find(x=>x.k===me); const foe=w.att===me?w.def:w.att; const cp=GAME.capPid(foe); if(u&&cp!==null){ GAME.orderUnits(g,[u.id],cp); } ironCurtain.refresh(); } }
 const zm=location.hash.match(/z=(\w+)/); if(zm) ironCurtain.zoomTo(zm[1]);
 const mm=location.hash.match(/mode=(\w+)/); if(mm) document.querySelector('[data-mode="'+mm[1]+'"]').click();
 if(location.hash.includes('mid')){ const t0=performance.now(); while(performance.now()-t0<800); d3.timerFlush(); }

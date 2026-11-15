@@ -99,6 +99,52 @@
     check('decisions: the choice counts', G().c.IND.a === 0 && G().news.some(n => /^You chose: Belong to no bloc/.test(n.text)), G().c.IND.a);
     await answer();
   });
+  // ---- a war fought with divisions ----
+  await step('divisions', async () => {
+    try { localStorage.removeItem('iron-curtain-lite-3'); } catch (e) { }
+    ironCurtain.start(); await wait(50); click('[data-side="IND"]'); await wait(100); await answer();
+    const g = G(); g.wars = []; g.units = []; g.ctl = {}; g.c.PAK.war = null; g.c.IND.war = null;
+    GAME.startWar(g, 'IND', 'PAK', 0); ironCurtain.refresh(); await wait(50);
+    check('war: End Season while at war', /Season/.test(q('#end').textContent) && /Spring/.test(q('#year').textContent), q('#end').textContent);
+    const y0 = g.year; click('#end'); await wait(250); await answer();
+    check('war: a season passes, not a year', (g.year === y0 && g.season === 1) || !g.wars.length, GAME.SEASONS[g.season] + ' ' + g.year);
+    check('war: divisions on the map', qa('g.div').length > 0 && qa('g.div.mine').length > 0, qa('g.div').length + ' counters');
+    if (!g.wars.length) return;
+    qa('g.div.mine')[0].dispatchEvent(new MouseEvent('click', { bubbles: true })); await wait(50);
+    check('war: pick a division', /picked/.test(panel()) && qa('g.div.sel').length > 0);
+    const cap = GAME.capPid('PAK'), p = qa('path.land').find(x => x.__data__ && x.__data__.pid === cap);
+    p.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true })); await wait(50);
+    const mine = g.units.filter(u => u.k === 'IND' && u.goal === cap);
+    check('war: right-click sends them', mine.length > 0 && qa('path.plan').length > 0, mine.length + ' marching');
+    click('[data-uorder="hold"]'); await wait(30);
+    check('war: hold here', g.units.filter(u => u.k === 'IND' && !u.auto && u.goal === null).length > 0);
+    click('[data-stance$="|hold"]'); await wait(30);
+    check('war: stance hold', g.stance[g.wars[0].id] === 'hold');
+    click('[data-stance$="|advance"]'); await wait(30);
+    for (let i = 0; i < 40 && g.wars.length && !g.over; i++) { click('#end'); await wait(120); await answer(); if (g.conf) { GAME.confAuto(g); ironCurtain.refresh(); } }
+    check('war: it ends, the divisions go home', !g.wars.some(w => w.att === 'IND' || w.def === 'IND') && !g.units.some(u => u.k === 'IND') && /Year/.test(q('#end').textContent), g.wars.length + ' wars');
+  });
+  // ---- a civil war fought with divisions: you are the government, then the rebels ----
+  await step('civil war', async () => {
+    try { localStorage.removeItem('iron-curtain-lite-3'); } catch (e) { }
+    ironCurtain.start(); await wait(50); click('[data-side="CHN"]'); await wait(100); await answer();
+    const g = G(); g.wars = []; g.units = []; g.ctl = {}; g.c.CHN.war = null; GAME.civilWar(g, 'CHN', 'SU', 0); ironCurtain.refresh(); await wait(50);
+    check('civil: End Season in your civil war', /Season/.test(q('#end').textContent), q('#end').textContent);
+    click('#end'); await wait(250); await answer();
+    const w = g.c.CHN.war;
+    check('civil: rebels hold land and have divisions', !w || (Object.values(g.ctl).includes('R:CHN') && g.units.some(u => u.k === 'R:CHN')), w ? Object.values(g.ctl).filter(x => x === 'R:CHN').length + ' provinces' : 'over');
+    check('civil: your loyal divisions', !w || qa('g.div.mine').length > 0);
+    check('civil: rebel land coloured', !w || qa('path.land').some(p => p.__data__ && g.ctl[p.__data__.pid] === 'R:CHN' && p.getAttribute('fill') !== null));
+    for (let i = 0; i < 48 && g.c.CHN.war && !g.over; i++) { click('#end'); await wait(60); await answer(); if (g.conf) { GAME.confAuto(g); ironCurtain.refresh(); } }
+    check('civil: it ends and the rebels go', g.over || (!g.c.CHN.war && !g.units.some(u => u.k === 'R:CHN') && !Object.values(g.ctl).includes('R:CHN')), g.over ? g.over.why : 'ok');
+    // your own rising inside a union: the rebels are yours
+    try { localStorage.removeItem('iron-curtain-lite-3'); } catch (e) { }
+    ironCurtain.start(); await wait(50); click('[data-side="UKR"]'); await wait(100); await answer();
+    const h = G(); h.support = 70; h.militia = 4; GAME.unionAct(h, 'declare'); ironCurtain.refresh(); await wait(50);
+    if (!h.c.UKR.war) { check('rising: declared', false, 'no uprising'); return; }
+    click('#end'); await wait(250); await answer();
+    check('rising: your rebel divisions', !h.c.UKR.war || h.units.some(u => u.k === 'R:UKR') && qa('g.div.mine').length > 0, h.units.filter(u => u.k === 'R:UKR').length + ' rebel divisions');
+  });
   // ---- a superpower game to the end of the Cold War and beyond ----
   await step('superpower game', async () => {
     try { localStorage.removeItem('iron-curtain-lite-3'); } catch (e) { }
