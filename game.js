@@ -5,6 +5,7 @@
 // A nation tries to survive and grow: a bigger army, more friends, defeated enemies.
 (function (G) {
   if (!G.CWPROV && typeof require === 'function') try { require('./provinces.js'); } catch (e) { }
+  if (!(G.DATA && G.DATA.TREES) && typeof require === 'function') try { require('./trees.js'); } catch (e) { }
   const D = G.DATA, NB = G.NEIGHBOURS || {};
   const START = 1947, END = 1991;
   const SIDE = { US: 1, SU: -1 };                 // +alignment is American, -alignment is Soviet
@@ -72,7 +73,8 @@
   // do the lands of state a (itself, its regions, what it annexed) border the lands of state b?
   const landsOf = (g, key) => [key, ...ownedBy(g, key)];
   const borders = (g, a, b) => { syncBorders(g); const B = landsOf(g, stateOf(g, b)); return landsOf(g, stateOf(g, a)).some(k => B.some(j => neighbours(k, j))); };
-  const baseArmy = (key, g) => isHome(key) ? (key === 'USA' ? 30 : 40) : valueOf(g, key) * 3 + info(key).stab;
+  const modOf = (g, key, m) => (g && g.c[key] && g.c[key].mods && g.c[key].mods[m]) || 0;
+  const baseArmy = (key, g) => isHome(key) ? (key === 'USA' ? 30 : 40) : valueOf(g, key) * 3 + info(key).stab + modOf(g, key, 'army');
   // a country's worth: its starting value, plus what the player has developed, plus its lands
   // (its own regions - Scotland for Britain, Ukraine for the USSR - count a little; conquered countries in full)
   function valueOf(g, key) {
@@ -231,10 +233,14 @@
     return n;
   }
   function income(g, side) {
-    let n = (side === 'SU' ? 13 : 9.8) + (g.pw ? g.pw[side].econ / (side === 'SU' ? 30 : 50) : 1.8);   // the Soviet planned economy starts with fewer friends but more to spend; both grow with the economy
+    let n = (side === 'SU' ? 14.6 : 6.9) + (g.pw ? g.pw[side].econ / (side === 'SU' ? 30 : 50) : 1.8);   // the Soviet planned economy starts with fewer friends but more to spend; both grow with the economy
     for (const d of D.COUNTRIES) if (blocOf(g, d.key) === side) n += d.val * 0.25;
-    return Math.round(n);
+    return Math.round(n + modOf(g, HOME[side], 'income'));
   }
+  // Nationalists, kings, dictators and juntas go their own way: they may lean toward a superpower, but they do
+  // not join its bloc unless they sign up to an alliance; outside pressure moves them less.
+  const OWN_WAY = 45;
+  const ownWay = (g, key) => { const c = g.c[key]; return !!c && !isHome(key) && (['Monarchy', 'Dictatorship', 'Junta'].includes(c.gov) || c.ruling === 'nat' || (c.mods && c.mods.ownWay && !['com', 'soc'].includes(c.ruling) && !['Socialist', 'Revolutionary'].includes(c.gov))) && !pactsOf(g, key).length; };
   function leaning(a) {
     if (a >= BLOC) return 'American bloc'; if (a >= 25) return 'Leans West';
     if (a <= -BLOC) return 'Soviet bloc'; if (a <= -25) return 'Leans East'; return 'Neutral';
@@ -257,7 +263,7 @@
   function nationIncome(g) {
     const occ = territories(g).reduce((t, x) => t + (x.occ.policy === 'exploit' ? x.worth * 1.5 : x.occ.policy === 'integrate' && !x.occ.core ? -1 : 0), 0);
     if (captive(g)) return Math.round(3 + (g.support || 0) / 12);
-    return Math.round(3 + valueOf(g, g.nation) * 1.5 + (pactsOf(g, g.nation).length ? 2 : 0) + puppetsOf(g).length - (g.c[g.nation].war ? 2 : 0) + occ);
+    return Math.round(3 + valueOf(g, g.nation) * 1.5 + (pactsOf(g, g.nation).length ? 2 : 0) + puppetsOf(g).length - (g.c[g.nation].war ? 2 : 0) + occ + modOf(g, g.nation, 'income'));
   }
   function grade(gain) {
     if (gain >= 30) return 'Rising Power';
@@ -375,6 +381,80 @@
     return Math.min(s, 45);
   }
 
+  // ================= decision trees =================
+  // Like national focuses, but decisions (trees.js): each costs IP and needs the ones above it. Who pays:
+  // the player (their IP), a computer superpower (its IP), a computer nation (decision points it saves up).
+  const TREES = (D.TREES || { NATION: [], US: [], SU: [], SPECIAL: {} });
+  function treeOf(key) {
+    if (key === 'USA') return TREES.US; if (key === 'SUN') return TREES.SU;
+    return TREES.NATION.concat(TREES.SPECIAL[key] || []);
+  }
+  const payer = (g, key) => key === g.nation ? 'ME' : g.side && HOME[g.side] === key ? g.side : isHome(key) ? (key === 'USA' ? 'US' : 'SU') : null;
+  function decisionCheck(g, key, id) {
+    const c = g.c[key], n = treeOf(key).find(x => x.id === id), r = { ok: false, cost: n ? n.cost : 0, why: '' };
+    if (!n || !c) return (r.why = 'No such decision', r);
+    const done = c.done || [];
+    if (done.includes(id)) return (r.why = 'Done', r);
+    if ((n.excl || []).some(x => done.includes(x))) return (r.why = 'Closed by an earlier choice', r);
+    if ((n.req || []).some(x => !done.includes(x))) return (r.why = 'Needs ' + n.req.filter(x => !done.includes(x)).map(x => treeOf(key).find(y => y.id === x).name).join(' and '), r);
+    if (n.any && !n.any.some(x => done.includes(x))) return (r.why = 'Needs ' + n.any.map(x => treeOf(key).find(y => y.id === x).name).join(' or '), r);
+    if (n.year && g.year < n.year) return (r.why = 'Not before ' + n.year, r);
+    if (n.when && !n.when(g, TH, key)) return (r.why = n.whenWhy || 'Not now', r);
+    if (!isHome(key) && (!c.independent || c.owner)) return (r.why = 'Not while it is not free', r);
+    const p = payer(g, key), have = p ? g.ip[p] : (c.dp || 0);
+    if (have < n.cost) return (r.why = p ? 'Not enough IP' : 'Not enough points', r);
+    r.ok = true; return r;
+  }
+  // helpers for the effects in trees.js
+  const TH = {
+    isHome, dev: (g, k) => { const c = g.c[k]; if (c) c.dev = Math.min(3, (c.dev || 0) + 1); },
+    mod: (g, k, m, n) => { const c = g.c[k]; if (!c) return; c.mods = c.mods || {}; c.mods[m] = (c.mods[m] || 0) + n; },
+    stab: (g, k, n) => { const c = g.c[k]; if (c && !isHome(k)) c.stab = n > 0 ? Math.max(c.stab, Math.min(4, c.stab + n)) : clamp(c.stab + n, 1, 5); },   // decisions never make a country rock solid
+    army: (g, k, n) => { const c = g.c[k]; if (c) c.army = Math.max(1, c.army + n); },
+    party: (g, k, id, n) => { if (g.c[k] && g.c[k].parties) boostParty(g, k, id, n); },
+    lean: (g, k, n) => shift(g, k, n),
+    tension: (g, n) => addTension(g, n),
+    glory: (g, k, n) => { if (k === g.nation) g.bonus.ME += n; },
+    support: (g, k, side, n) => { const c = g.c[k]; if (c && c.war) c.war.help[side] += n; },
+    inSide: (g, k, side) => pactsOf(g, k).some(p => p.side === side && !p.members.includes(HOME[OTHER[side]])),
+    govern: (g, k, gov, party) => { const c = g.c[k]; if (!c) return; c.gov = gov; c.govSince = g.year; takePower(g, k, party); },
+    // join an alliance of that side whose members border this country (or share its region)
+    joinNear: (g, k, side) => {
+      const reg = info(k).region;
+      const p = g.pacts.filter(x => x.side === side && x.id !== 'eu' && !x.members.includes(k)).find(x => x.members.some(m => m !== HOME[side] && (neighbours(m, k) || info(m).region === reg)));
+      if (!p) return false;
+      p.members.push(k); say(g, `${info(k).name} joins ${p.name}.`); return true;
+    },
+  };
+  function decide(g, key, id) {
+    const r = decisionCheck(g, key, id); if (!r.ok) return r.why;
+    const c = g.c[key], n = treeOf(key).find(x => x.id === id), p = payer(g, key);
+    if (p) g.ip[p] -= n.cost; else c.dp -= n.cost;
+    c.done = (c.done || []).concat([id]);
+    n.fx(g, TH, key);
+    say(g, `${info(key).name}: ${n.name}.`);
+    return `${n.name}.`;
+  }
+  // the computer countries walk their trees: a decision when they can afford one, the ones that fit their politics first
+  function aiDecide(g, key, budgetLeft) {
+    const c = g.c[key], opts = treeOf(key).filter(n => decisionCheck(g, key, n.id).ok && (!n.ai || n.ai(g, key)));
+    if (!opts.length) return false;
+    const a = isHome(key) ? SIDE[key === 'USA' ? 'US' : 'SU'] * 100 : c.a;
+    const score = n => (n.lean ? (Math.sign(a) === n.lean ? 3 : Math.abs(a) < 25 ? 1 : -3) : 1) + (n.excl && ownWay(g, key) && n.id === 'nonal' ? 3 : 0) + Math.random() * 2 - n.cost * 0.1;
+    const pick = opts.sort((x, y) => score(y) - score(x))[0];
+    if (budgetLeft !== undefined && pick.cost > budgetLeft) return false;
+    decide(g, key, pick.id);
+    return true;
+  }
+  function treeYear(g) {
+    for (const d of D.COUNTRIES) {
+      const c = g.c[d.key];
+      if (isHome(d.key) || d.key === g.nation || !c.independent || c.owner) continue;
+      c.dp = Math.min(8, (c.dp || 0) + 0.45 + d.val * 0.2);
+      aiDecide(g, d.key);
+    }
+  }
+
   // ================= helpers used by events =================
   function shift(g, key, amount) { const c = g.c[key]; if (c && !isHome(key)) c.a = clamp(c.a + amount, -100, 100); }
   function addTension(g, n) {
@@ -386,8 +466,8 @@
     com: { name: 'Communists', camp: 'SU', gov: 'Socialist', a: -70, color: '#c62828' },
     soc: { name: 'Socialist revolutionaries', camp: 'SU', gov: 'Revolutionary', a: -60, color: '#e57373' },
     lib: { name: 'Democrats', camp: 'US', gov: 'Democracy', a: 65, color: '#4f8fe6' },
-    con: { name: 'Royalists and conservatives', camp: 'US', gov: 'Monarchy', a: 70, color: '#1f4e8c' },
-    nat: { name: 'Nationalist officers', camp: 'US', gov: 'Junta', a: 70, color: '#8d6e4a' },
+    con: { name: 'Royalists and conservatives', camp: 'US', gov: 'Monarchy', a: 35, color: '#1f4e8c' },
+    nat: { name: 'Nationalist officers', camp: 'US', gov: 'Junta', a: 35, color: '#8d6e4a' },
   };
   // the cause: the biggest party of the rebels' camp that is not in power (Soviet-backed rebels are communists unless the socialists are much bigger)
   function rebelCause(c, rebels) {
@@ -581,6 +661,8 @@
   const PUSH_CAP = 10;
   const pushRoom = g => Math.max(0, PUSH_CAP - (g.pushed || 0));
   function push(g, key, amount) {
+    if (ownWay(g, key)) amount *= 0.6;
+    amount *= 1 - Math.min(0.8, modOf(g, key, 'resist'));
     if (key !== g.nation) return shift(g, key, amount);
     const n = Math.sign(amount) * Math.min(Math.abs(amount) * 0.4, pushRoom(g));
     g.pushed = (g.pushed || 0) + Math.abs(n);
@@ -1242,6 +1324,7 @@
 
   // ================= the computer superpowers =================
   function computerTurn(g, side) {
+    if (g.ip[side] >= 14 && Math.random() < 0.4) aiDecide(g, HOME[side], g.ip[side] - 8);
     const s = SIDE[side], P = g.pw[side], O = g.pw[OTHER[side]];
     if (g.tension >= 70) detente(g, side);
     // programmes at home first, when they matter
@@ -1460,7 +1543,7 @@
     const gov = myRising ? g.c[owner].army * 0.8 * (isHome(owner) ? g.pw[owner === 'USA' ? 'US' : 'SU'].home / 70 : g.c[owner].stab / 3)   // against your rising the centre throws in what its grip allows
       : owner ? (isHome(owner) ? 12 : g.c[owner].army * 0.4) : c.army;
     if (k === w.def) return gov;
-    return myRising ? 2 + (g.militia || 0) * 2 + (g.support || 0) / 5 : gov * (0.6 + (4 - c.stab) * 0.15);
+    return myRising ? 2 + (g.militia || 0) * 2 + (g.support || 0) / 5 : gov * (0.6 + (4 - c.stab) * 0.15) * (modOf(g, w.def, 'police') ? 0.67 : 1);
   }
   const civilDivs = (g, w, k) => clamp(Math.round(civilArmy(g, w, k) / DIV), 1, MAX_DIVS);
   const nbOf = id => Object.keys(PBY[id].nb).map(Number);
@@ -1489,7 +1572,7 @@
   const unitsOf = (g, w) => (g.units || []).filter(u => u.w === w.id);
   const unitPower = u => u.str * Math.max(0.15, u.org) * u.q;
   const canEnter = (T, side, i) => { const s = T.side[i]; return !!s && (s === side || !T.home[i]); };
-  const quality = (g, k) => rebLand(k) ? 0.9 : isHome(k) ? 1.4 : 0.85 + g.c[k].stab * 0.06;
+  const quality = (g, k) => rebLand(k) ? 0.9 : isHome(k) ? 1.4 : 0.85 + g.c[k].stab * 0.06 + modOf(g, k, 'quality');
   const sideOfU = (T, u) => T.S.att.includes(u.k) ? 'att' : 'def';
   const ll = u => [u.x, u.y];
   function putAt(u, i) { u.cell = i; const p = cellLL(i); u.x = p[0]; u.y = p[1]; u.p = CELL[i]; }
@@ -1762,7 +1845,8 @@
       const allyBonus = foe === 'def' && !w.civil ? 1 + allyHelp(g, w.def, w.att) / 120 : 1;
       const capC = capCellSide(w, foe), atCap = capC !== null && km(ll(t), cellLL(capC)) < 60;
       let pa = A.reduce((s, u) => s + unitPower(u), 0) * rand(0.8, 1.2);
-      const pd = D0.reduce((s, u) => s + unitPower(u), 0) * 1.3 * (atCap ? 1.25 : 1) * allyBonus * rand(0.8, 1.2);
+      const fort = T.S[foe].includes(T.own[t.cell]) ? 1 + modOf(g, T.own[t.cell], 'fort') : 1;          // fortifications on their own land
+      const pd = D0.reduce((s, u) => s + unitPower(u), 0) * 1.3 * (atCap ? 1.25 : 1) * allyBonus * fort * rand(0.8, 1.2);
       const dirs = A.reduce((m, u) => Math.max(m, km(ll(u), ll(A[0]))), 0);
       if (dirs > 90) pa *= 1.15;                                          // attacked from more than one side
       const r = pa / Math.max(0.01, pd);
@@ -2050,6 +2134,7 @@
     if (g.over) return;
     unionYear(g);
     partyYear(g);
+    treeYear(g);
     govYear(g);
     ownedYear(g);
     puppetYear(g);
@@ -2068,6 +2153,7 @@
       if (!warOf(g, d.key) && c.army < baseArmy(d.key, g)) c.army = Math.min(baseArmy(d.key, g), c.army + 1 + baseArmy(d.key, g) * 0.08);
       if (isHome(d.key) || !c.independent || c.war || c.owner) continue;
       if (Math.abs(c.a) < BLOC && d.key !== g.nation) c.a = clamp(c.a + rand(-2, 2), -100, 100);
+      if (d.key !== g.nation && Math.abs(c.a) > OWN_WAY && ownWay(g, d.key)) c.a -= Math.sign(c.a) * (Math.abs(c.a) - OWN_WAY) * 0.25;   // back out of the bloc
       if (c.stab < 3 && Math.random() < 0.06) c.stab++;
       if (c.stab <= 2 && wars < 5 && Math.abs(c.a) < 75 && Math.random() < 0.012 * (4 - c.stab)) { civilWar(g, d.key, c.a >= 0 ? 'SU' : 'US', 0); wars++; }
     }
@@ -2139,5 +2225,5 @@
     newGame, check, act, homeCheck, homeAct, warOf, warCheck, warHelp, makePeace, deployed, detente, endYear, choose,
     score, income, nationScore, nationIncome, friendsOf, puppetsOf, pactsOf, allied, blocOf, leaning, isHome, info, neighbours,
     borders, landsOf, capitalName, computerTurn, baseArmy, valueOf, PARTIES, PARTY, partyCheck, partyAct,
-    PUSH_CAP, isUnionPart, regionsOf, free, judge, finish, sovietWeak, POLICIES, TERR_ACTIONS, territories, territoryCheck, territoryAct, lostLand, takenLand, PROV, PBY, holderOf, SEASONS, DIV, ctrlOf, sidesOf, theatre, unitsOf, route, capPid, orderUnits, setStance, endSeason, playerFights, warSeason, startWar, marchShare, warCells, cellAt, cellLL, CELL, GRID: GR, CELLS_OF, capCellOf, fronts, nameOf, myKeys, isMine, rebLand, civilWar, provVal, provList, landBlock, cutLand, fixCuts, syncBorders, PEACE_TERMS, termsFor, peaceChance, proposePeace, confView, confDemand, confPass, confAuto, startConference, formCheck, form, ownedBy, stateOf, applyNames, playerKey, warScore };
+    PUSH_CAP, isUnionPart, regionsOf, free, judge, finish, sovietWeak, POLICIES, TERR_ACTIONS, territories, territoryCheck, territoryAct, lostLand, takenLand, PROV, PBY, holderOf, treeOf, decisionCheck, decide, TREES, ownWay, OWN_WAY, SEASONS, DIV, ctrlOf, sidesOf, theatre, unitsOf, route, capPid, orderUnits, setStance, endSeason, playerFights, warSeason, startWar, marchShare, warCells, cellAt, cellLL, CELL, GRID: GR, CELLS_OF, capCellOf, fronts, nameOf, myKeys, isMine, rebLand, civilWar, provVal, provList, landBlock, cutLand, fixCuts, syncBorders, PEACE_TERMS, termsFor, peaceChance, proposePeace, confView, confDemand, confPass, confAuto, startConference, formCheck, form, ownedBy, stateOf, applyNames, playerKey, warScore };
 })(typeof window !== 'undefined' ? window : globalThis);

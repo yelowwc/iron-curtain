@@ -266,3 +266,25 @@ body.dc1 .defcon { animation: blink 1s steps(1) infinite; }
 .wzone .zoneedge { fill: none; stroke-width: 1.3; stroke-linejoin: round; vector-effect: non-scaling-stroke; pointer-events: none; }
 .bflash { r: .8; }
 .drawroute { fill: none; stroke: rgba(232,196,90,.9); stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; vector-effect: non-scaling-stroke; pointer-events: none; filter: drop-shadow(0 0 1px #0b141c); }
+
+.pathline { color: #c9b47a; margin: 4px 0; }
+/* ---- decision trees ---- */
+.card.wide { width: min(1540px, 96vw); }
+.treewrap { overflow-x: auto; margin: 14px 0 18px; }
+.tree { position: relative; margin: 0 auto; }
+.tlines { position: absolute; left: 0; top: 0; pointer-events: none; overflow: visible; }
+.tline { fill: none; stroke: #b8ac8a; stroke-width: 2; }
+.tline.on { stroke: #8b6a1c; stroke-width: 2.5; }
+.tline.any { stroke-dasharray: 5 4; }
+.thead { position: absolute; top: 0; font: 700 11px/1 system-ui, sans-serif; letter-spacing: .14em; text-transform: uppercase; color: #8b2a20; border-bottom: 1px solid #c9bd9a; padding-bottom: 5px; }
+.tnode { position: absolute; display: flex; flex-direction: column; align-items: flex-start; gap: 2px; text-align: left; padding: 7px 9px; border-radius: 6px; border: 1px solid #c9bd9a; background: #e6dcc0; color: #3a352a; font-size: 12px; overflow: hidden; }
+.tnode b { font-size: 12.5px; line-height: 1.15; }
+.tnode em { font-style: normal; font-size: 10.5px; font-weight: 700; color: #8b6a1c; }
+.tnode small { font-size: 10.5px; line-height: 1.25; color: #6a6250; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; }
+.tnode.ok { background: #f8e9b0; border: 2px solid #c99a1c; color: #1c1a15; cursor: pointer; box-shadow: 0 2px 8px rgba(140,100,20,.25); }
+.tnode.ok:hover { background: #ffe58a; }
+.tnode.done { background: #3d4a3a; border-color: #2a3328; color: #e6eedd; }
+.tnode.done em { color: #a9d38f; } .tnode.done small { color: #b9c6b0; }
+.tnode.locked { opacity: .6; }
+.tnode.closed { opacity: .32; text-decoration: line-through; }
+.treebtn { border-color: #e8c45a !important; }

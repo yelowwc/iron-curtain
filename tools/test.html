@@ -43,6 +43,7 @@
 <script src="../provinces.js"></script>
 <script src="../neighbours.js"></script>
 <script src="../provgrid.js"></script>
+<script src="../trees.js"></script>
 <script src="../game.js"></script>
 <script src="../ui.js"></script>
 <script>
@@ -75,6 +76,7 @@ const dv=location.hash.match(/divs=(\w+):(\w+):(\d+)/); if(dv){ const g=ironCurt
   if(location.hash.includes('pickme')){ const el=[...document.querySelectorAll('g.div.mine')][0]; if(el) el.dispatchEvent(new MouseEvent('click',{bubbles:true})); }
   if(location.hash.includes('order')){ const me=GAME.playerKey(g), u=g.units.find(x=>x.k===me); const foe=w.att===me?w.def:w.att; const cp=GAME.capPid(foe); if(u&&cp!==null){ GAME.orderUnits(g,[u.id],cp); } ironCurtain.refresh(); } }
 if(location.hash.includes("puppetit")){ const g=ironCurtain.game; g.c.IRQ.puppetOf="IRN"; g.c.AFG.puppetOf="SUN"; g.c.JOR.puppetOf="USA"; ironCurtain.refresh(); }
+if(location.hash.includes("treeit")){ const g=ironCurtain.game; g.ip.ME=40; g.ip.US=40; GAME.decide(g, GAME.playerKey(g), GAME.playerKey(g)==="USA"?"truman":"plan"); ironCurtain.refresh(); document.getElementById("opentree").click(); }
 const zm=location.hash.match(/z=(\w+)/); if(zm) ironCurtain.zoomTo(zm[1]);
 const mm=location.hash.match(/mode=(\w+)/); if(mm) document.querySelector('[data-mode="'+mm[1]+'"]').click();
 if(location.hash.includes('mid')){ const t0=performance.now(); while(performance.now()-t0<800); d3.timerFlush(); }

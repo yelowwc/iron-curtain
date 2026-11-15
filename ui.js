@@ -1065,7 +1065,7 @@
       <div class="facts"><div class="fact"><small>Stability</small>${pips(c.stab)}</div><div class="fact"><small>Army</small>${Math.round(c.army)}</div>
       <div class="fact"><small>Economy</small>${'★'.repeat(GAME.valueOf(g, key))} <span class="sub">${c.dev < 3 ? c.devProgress + '/' + (3 + c.dev) : 'max'}</span></div><div class="fact"><small>Income</small>+${GAME.nationIncome(g)} IP/yr</div>
       <div class="fact"><small>Friends</small>${GAME.friendsOf(g).length}</div><div class="fact"><small>Defeated enemies</small>${GAME.puppetsOf(g).length}</div></div>
-      <div class="sub">Foreign pressure: the superpowers can move your politics at most ${GAME.PUSH_CAP} a year${g.pushed ? ` (this year so far: ${Math.round(g.pushed)})` : ''}.</div>
+      <div class="sub">Foreign pressure: the superpowers can move your politics at most ${GAME.PUSH_CAP} a year${g.pushed ? ` (this year so far: ${Math.round(g.pushed)})` : ''}.</div>${treeButton(key)}
       ${partiesHtml(key)}`;
     if (c.war) h += civilBox(c) + `<div class="sub" style="color:#f0a03c">If the rebels win, your government falls.</div>`;
     const sw = GAME.warOf(g, key); if (sw) h += warBox(sw);
@@ -1141,7 +1141,7 @@
     if (g.nation && (!sel || sel === g.nation)) { el.innerHTML = homePanel(); bind(el); return; }   // your own country: the management menu
     if (!sel || sel === GAME.HOME[g.side]) {
       el.innerHTML = `<h2>${esc(GAME.NAME[g.side])}</h2><div class="sub">You lead the ${g.side === 'US' ? 'West' : 'East'}. Goal: have the higher score in ${GAME.END}.</div>
-        ${alliancesLine(GAME.HOME[g.side])}${homeFront()}${cabinetHtml()}${(sw => sw ? warBox(sw) : "")(GAME.warOf(g, GAME.HOME[g.side]))}
+        ${alliancesLine(GAME.HOME[g.side])}${treeButton(GAME.HOME[g.side])}${homeFront()}${cabinetHtml()}${(sw => sw ? warBox(sw) : "")(GAME.warOf(g, GAME.HOME[g.side]))}
         <h3>What to do</h3><ul class="empty">
         <li><b>Click a country</b> on the map to see it and act on it.</li>
         <li>Push countries past <b>${GAME.BLOC}</b> toward you to bring them into your bloc. Each adds its value to your score.</li>
@@ -1176,11 +1176,12 @@
     if (!c.independent) { el.innerHTML = h + `<p class="sub">A colony of ${esc(d.colony)}. It becomes independent in ${d.indep}, and then you can win it over.</p>`; return; }
     h += `<div class="align"><b style="left:20%"></b><b style="left:80%"></b><i style="left:${(c.a + 100) / 2}%"></i></div>
       <div class="ends"><span>Soviet bloc</span><b style="color:var(--ink)">${GAME.leaning(c.a)}</b><span>American bloc</span></div>
+      ${GAME.ownWay(g, sel) ? `<div class="sub" style="color:#c9b47a">${c.ruling === 'nat' ? 'Nationalists rule' : esc(c.gov) === 'Monarchy' ? 'The king rules' : 'A strongman rules'}: it goes its own way. It may lean toward a superpower, but it will not join a bloc unless it joins an alliance, and outside pressure moves it less.</div>` : ''}
       <div class="facts"><div class="fact"><small>Stability</small>${pips(c.stab)}</div><div class="fact"><small>Army</small>${Math.round(c.army)}</div>
       <div class="fact"><small>Your moves here</small>${c.moves}/2 this year</div>
       <div class="fact"><small>${g.nation ? 'Towards you' : 'Status'}</small>${g.nation ? (GAME.friendsOf(g).some(f => f.key === sel) ? 'A friend' : Math.round(Math.abs(c.a - g.c[g.nation].a)) + ' apart') : c.puppetOf ? 'Defeated' : 'Free'}</div></div>
       ${g.nation ? GAME.territories(g).filter(t => t.kind === 'cut' && t.land === sel).map(terrCard).join('') : ''}
-      ${alliancesLine(sel)}${GAME.lostLand(g, sel).map(k => `<div class="sub" style="color:#f0a03c">Lost ${esc(GAME.provList(k.ids || []))} to ${esc(GAME.info(k.taker).name)} in ${k.year}.</div>`).join('')}${partiesHtml(sel)}`;
+      ${pathLine(sel)}${alliancesLine(sel)}${GAME.lostLand(g, sel).map(k => `<div class="sub" style="color:#f0a03c">Lost ${esc(GAME.provList(k.ids || []))} to ${esc(GAME.info(k.taker).name)} in ${k.year}.</div>`).join('')}${partiesHtml(sel)}`;
     if (c.war) h += civilBox(c);
     const sw = GAME.warOf(g, sel); if (sw) h += warBox(sw);
     h += `<h3>Your moves</h3>`;
@@ -1196,7 +1197,47 @@
     }
     el.innerHTML = h; bind(el);
   }
+  // ================= decision trees =================
+  // ================= decision trees =================
+  const BRANCHES = [['Economy', 0, 1], ['Army', 2, 2], ['Politics', 3, 4], ['Foreign policy', 5, 7], ['', 8, 9]];
+  function treeButton(key) {
+    const open = GAME.treeOf(key).filter(n => GAME.decisionCheck(g, key, n.id).ok).length;
+    return pathLine(key) + `<button class="act treebtn" id="opentree"><b>📜 Decisions</b><em>${open ? open + ' open' : 'none open'}</em><small>Your country's path, like national focuses: each decision costs IP and opens the next ones.</small></button>`;
+  }
+  function pathLine(key) {
+    const done = (g.c[key] && g.c[key].done) || []; if (!done.length) return '';
+    const names = done.map(id => (GAME.treeOf(key).find(n => n.id === id) || {}).name).filter(Boolean);
+    return `<div class="sub pathline">Path so far: ${names.map(esc).join(' · ')}</div>`;
+  }
+  function openTree() {
+    const key = GAME.playerKey(g), nodes = GAME.treeOf(key), done = g.c[key].done || [];
+    const W = 132, H = 92, GX = 146, GY = 112, top = GAME.isHome(key) ? 6 : 30;
+    const cols = Math.max(...nodes.map(n => n.col)) + 1, rows = Math.max(...nodes.map(n => n.row)) + 1;
+    const pos = n => [n.col * GX, top + n.row * GY];
+    const byId = {}; nodes.forEach(n => byId[n.id] = n);
+    const lines = nodes.flatMap(n => [...(n.req || []).map(r => [r, n, 0]), ...(n.any || []).map(r => [r, n, 1])]).filter(([r]) => byId[r]).map(([r, n, dash]) => {
+      const [x1, y1] = pos(byId[r]), [x2, y2] = pos(n), on = done.includes(r);
+      return `<path d="M${x1 + W / 2},${y1 + H} C${x1 + W / 2},${y1 + H + 16} ${x2 + W / 2},${y2 - 16} ${x2 + W / 2},${y2}" class="tline${on ? ' on' : ''}${dash ? ' any' : ''}"/>`;
+    }).join('');
+    const heads = GAME.isHome(key) ? '' : BRANCHES.filter(([name, a, b]) => nodes.some(n => n.col >= a && n.col <= b + 0.5))
+      .map(([name, a, b]) => `<div class="thead" style="left:${a * GX}px;width:${(b - a) * GX + W}px">${esc(name || GAME.info(key).name)}</div>`).join('');
+    const cards = nodes.map(n => {
+      const r = GAME.decisionCheck(g, key, n.id), isDone = done.includes(n.id), closed = !isDone && r.why === 'Closed by an earlier choice';
+      const [x, y] = pos(n), cls = isDone ? 'done' : r.ok ? 'ok' : closed ? 'closed' : 'locked';
+      return `<button class="tnode ${cls}" data-dec="${n.id}" style="left:${x}px;top:${y}px;width:${W}px;height:${H}px" ${r.ok ? '' : 'disabled'} title="${esc(n.help + (isDone || r.ok ? '' : ' (' + r.why + ')'))}">
+        <b>${esc(n.name)}</b><em>${isDone ? '✓ done' : closed ? 'closed' : r.ok ? n.cost + ' IP' : n.cost + ' IP · ' + esc(r.why)}</em><small>${esc(n.help)}</small></button>`;
+    }).join('');
+    const ip = Math.floor(g.ip[g.nation ? 'ME' : g.side]);
+    modal(`<div class="kicker">${g.year} · Decisions</div><h1>${esc(GAME.isHome(key) ? GAME.NAME[g.side] : GAME.info(key).name)}</h1>
+      <p class="sub">You have <b>${ip} IP</b>. <b>Gold</b>: you can take it now. Each needs the one above it (dashed: either of them); a choice can close others for good. Hover a card for the whole text.</p>
+      <div class="treewrap"><div class="tree" style="width:${(cols - 1) * GX + W}px;height:${top + rows * GY}px"><svg class="tlines" width="${cols * GX}" height="${top + rows * GY}">${lines}</svg>${heads}${cards}</div></div>
+      <button class="go" id="treeclose">CLOSE</button>`);
+    $('card').classList.add('wide');
+    $('card').querySelectorAll('[data-dec]').forEach(b => b.onclick = () => { toast(GAME.decide(g, key, b.dataset.dec)); refresh(); openTree(); });
+    $('treeclose').onclick = () => { close(); showEvents(); };
+  }
   function bind(el) {
+    const ot = el.querySelector('#opentree'); if (ot) ot.onclick = openTree;
     const me = actor();
     el.querySelectorAll('[data-act]').forEach(b => b.onclick = () => { toast(GAME.act(g, me, b.dataset.act, sel)); after(); });
     el.querySelectorAll('[data-war]').forEach(b => b.onclick = () => { const [party, kind] = b.dataset.war.split('|'); toast(GAME.warHelp(g, me, GAME.warOf(g, sel || g.nation), party, kind)); after(); });
@@ -1251,7 +1292,7 @@
 
   // ================= pop-ups =================
   function modal(html) { $('card').innerHTML = html; $('modal').hidden = false; }
-  function close() { $('modal').hidden = true; }
+  function close() { $('modal').hidden = true; $('card').classList.remove('wide'); }
 
   // the result of a game (or of the Cold War, at the end of 1991)
   function verdictText(o) {
