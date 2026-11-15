@@ -1199,7 +1199,7 @@
   }
   // ================= decision trees =================
   // ================= decision trees =================
-  const BRANCHES = [['Economy', 0, 1], ['Army', 2, 2], ['Politics', 3, 4], ['Foreign policy', 5, 7], ['', 8, 9]];
+  const BRANCHES = [['Economy', 0, 1], ['Army', 2, 3], ['Politics', 4, 5], ['Foreign policy', 6, 8], ['', 9, 10]];
   function treeButton(key) {
     const open = GAME.treeOf(key).filter(n => GAME.decisionCheck(g, key, n.id).ok).length;
     return pathLine(key) + `<button class="act treebtn" id="opentree"><b>📜 Decisions</b><em>${open ? open + ' open' : 'none open'}</em><small>Your country's path, like national focuses: each decision costs IP and opens the next ones.</small></button>`;
@@ -1211,11 +1211,11 @@
   }
   function openTree() {
     const key = GAME.playerKey(g), nodes = GAME.treeOf(key), done = g.c[key].done || [];
-    const W = 132, H = 92, GX = 146, GY = 112, top = GAME.isHome(key) ? 6 : 30;
+    const W = 124, H = 92, GX = 132, GY = 110, top = GAME.isHome(key) ? 6 : 30;
     const cols = Math.max(...nodes.map(n => n.col)) + 1, rows = Math.max(...nodes.map(n => n.row)) + 1;
     const pos = n => [n.col * GX, top + n.row * GY];
     const byId = {}; nodes.forEach(n => byId[n.id] = n);
-    const lines = nodes.flatMap(n => [...(n.req || []).map(r => [r, n, 0]), ...(n.any || []).map(r => [r, n, 1])]).filter(([r]) => byId[r]).map(([r, n, dash]) => {
+    const lines = nodes.flatMap(n => [...(n.req || []).map(r => [r, n, 0]), ...(n.any || []).map(r => [r, n, 1])]).filter(([r, n]) => byId[r] && Math.abs(byId[r].col - n.col) <= 1.5).map(([r, n, dash]) => {   // a link across branches is said on the card, not drawn
       const [x1, y1] = pos(byId[r]), [x2, y2] = pos(n), on = done.includes(r);
       return `<path d="M${x1 + W / 2},${y1 + H} C${x1 + W / 2},${y1 + H + 16} ${x2 + W / 2},${y2 - 16} ${x2 + W / 2},${y2}" class="tline${on ? ' on' : ''}${dash ? ' any' : ''}"/>`;
     }).join('');

@@ -110,7 +110,7 @@
     ironCurtain.refresh(); await wait(30);
     check('decisions: button in your panel', !!q('#opentree') && /open/.test(q('#opentree').textContent));
     click('#opentree'); await wait(50);
-    check('decisions: the tree with Egypt\u2019s own decisions', qa('.tnode').length === 17 && /Free Officers/.test(q('#card').textContent), qa('.tnode').length + ' decisions');
+    check('decisions: the tree with Egypt\u2019s own decisions', qa('.tnode').length === 30 && /Free Officers/.test(q('#card').textContent), qa('.tnode').length + ' decisions');
     const n0 = qa('.tnode.ok')[0], ip0 = g.ip.ME, first = n0 && n0.dataset.dec;
     if (n0) n0.click(); await wait(50);
     check('decisions: taking one spends IP and opens the next', g.ip.ME < ip0 && (g.c.EGY.done || []).includes(first) && qa('.tnode.done').length === 1, first);

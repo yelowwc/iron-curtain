@@ -233,7 +233,7 @@
     return n;
   }
   function income(g, side) {
-    let n = (side === 'SU' ? 14.6 : 6.9) + (g.pw ? g.pw[side].econ / (side === 'SU' ? 30 : 50) : 1.8);   // the Soviet planned economy starts with fewer friends but more to spend; both grow with the economy
+    let n = (side === 'SU' ? 14.3 : 8.9) + (g.pw ? g.pw[side].econ / (side === 'SU' ? 30 : 50) : 1.8);   // the Soviet planned economy starts with fewer friends but more to spend; both grow with the economy
     for (const d of D.COUNTRIES) if (blocOf(g, d.key) === side) n += d.val * 0.25;
     return Math.round(n + modOf(g, HOME[side], 'income'));
   }
@@ -417,7 +417,7 @@
     glory: (g, k, n) => { if (k === g.nation) g.bonus.ME += n; },
     support: (g, k, side, n) => { const c = g.c[k]; if (c && c.war) c.war.help[side] += n; },
     inSide: (g, k, side) => pactsOf(g, k).some(p => p.side === side && !p.members.includes(HOME[OTHER[side]])),
-    govern: (g, k, gov, party) => { const c = g.c[k]; if (!c) return; c.gov = gov; c.govSince = g.year; takePower(g, k, party); },
+    govern: (g, k, gov, party) => { const c = g.c[k]; if (!c) return; c.gov = gov; c.govSince = g.year; party = party || (c.parties ? Object.keys(c.parties).sort((x, y) => c.parties[y] - c.parties[x])[0] : c.ruling); if (party) takePower(g, k, party); },   // no party given: the strongest one
     // join an alliance of that side whose members border this country (or share its region)
     joinNear: (g, k, side) => {
       const reg = info(k).region;
