@@ -231,7 +231,7 @@
     return n;
   }
   function income(g, side) {
-    let n = (side === 'SU' ? 13 : 10.65) + (g.pw ? g.pw[side].econ / (side === 'SU' ? 30 : 50) : 1.8);   // the Soviet planned economy starts with fewer friends but more to spend; both grow with the economy
+    let n = (side === 'SU' ? 13 : 9.8) + (g.pw ? g.pw[side].econ / (side === 'SU' ? 30 : 50) : 1.8);   // the Soviet planned economy starts with fewer friends but more to spend; both grow with the economy
     for (const d of D.COUNTRIES) if (blocOf(g, d.key) === side) n += d.val * 0.25;
     return Math.round(n);
   }
@@ -1559,6 +1559,7 @@
   }
   function muster(g, w, T) {
     w.raised = w.raised || {}; w.base = w.base || {};
+    w.ff = w.ff || { att: 0, def: 0 }; w.ffMax = w.ffMax || { att: 0, def: 0 };
     if (w.civil && !w.raised[w.att]) seedRebels(g, w, T);
     for (const side of ['att', 'def']) for (const k of T.S[side]) {
       if (w.raised[k]) continue;
@@ -1567,6 +1568,8 @@
       const before = g.units.length;
       const n = helper ? 8 : w.civil ? civilDivs(g, w, k) : divsFor(g, k);
       w.base[k] = n;
+      // behind the divisions you see stand the troops that hold the whole line: about half as many again
+      const add = n * 0.5 * quality(g, k); w.ff[side] += add; w.ffMax[side] += add;
       raise(g, w, T, k, n, quality(g, k));
       const made = g.units.length - before;
       if (!w.civil && !isHome(k) && made) for (const u of g.units.slice(before)) u.str = clamp(g.c[k].army / (made * DIV), 0.3, 1);
@@ -1609,46 +1612,65 @@
     for (const u of units) { u.path = []; u.goalCell = null; }
     if (!units.length) return;
     const pow = list => list.reduce((s, u) => s + unitPower(u), 0);
-    const total = pow(ours), enemy = pow(theirs);
+    const ff = w.ff || { att: 0, def: 0 };
+    const total = pow(ours) + ff[side] * 0.5, enemy = pow(theirs) + ff[foe] * 0.5;
     const need = stance === 'hold' ? Infinity : (total < enemy * 0.7 ? 1.6 : 1) * (side === 'att' ? 0.85 : 1.15) * Math.max(0.55, 1 - (w.quiet || 0) * 0.06);
-    // cut off: back toward home first
+    const go = (u, cell) => { u.goalCell = cell; u.path = route(T, side, u.cell, cell) || []; };
+    // cut off: break out toward home first
     const free = [];
     for (const u of units) {
       if (!u.cut) { free.push(u); continue; }
-      const home = T.cells.filter(i => T.side[i] === side && T.S[side].includes(T.own[i]));
-      let best = null, bd = Infinity; for (const i of home) { const d = km(cellLL(i), ll(u)); if (d < bd) { bd = d; best = i; } }
-      if (best !== null) { u.goalCell = best; u.path = route(T, side, u.cell, best) || []; }
+      let best = null, bd = Infinity;
+      for (const i of T.cells) { if (T.side[i] !== side || !T.S[side].includes(T.own[i])) continue; const d = km(cellLL(i), ll(u)); if (d < bd) { bd = d; best = i; } }
+      if (best !== null) go(u, best);
     }
     const F = frontCells(T, side);
     if (!F.length || !free.length) return;
     const fc = capCellSide(w, foe), aim = fc !== null ? cellLL(fc) : ll(theirs[0] || free[0]);
-    // posts along the front, one per division, and the nearest division to each
-    const posts = spread(F, free.length, aim), left = new Set(free), job = new Map();
+    const near = (list, pt, r) => pow(list.filter(x => km(ll(x), pt) < r));
+    const left = new Set(free);
+    // worn-out divisions step back a little to recover; someone else takes their place
+    for (const u of free) {
+      if (u.org >= 0.25 || ours.length < 3) continue;
+      const back = cellNb(u.cell).concat(...cellNb(u.cell).map(cellNb)).filter(j => T.side[j] === side && !F.includes(j))
+        .sort((x, y) => near(theirs, cellLL(x), 200) - near(theirs, cellLL(y), 200))[0];
+      if (back !== undefined) { left.delete(u); go(u, back); }
+    }
+    // 1. strikes: a few groups of two or three, at the weak spots of the enemy line and at bulges we can cut off
+    if (need < Infinity) {
+      const cand = new Set();
+      for (const i of F) for (const j of cellNb(i)) if (T.side[j] === foe && canEnter(T, side, j)) cand.add(j);
+      const sample = spread([...cand], 40, aim), scored = [];
+      for (const c of sample) {
+        const pt = cellLL(c);
+        let around = 0; for (const j of cellNb(c)) for (const k of cellNb(j)) if (T.side[k] === side) around++;
+        const weak = near(theirs, pt, 160) + (ff[foe] / Math.max(10, F.length)) * 1.5;
+        scored.push({ c, pt, weak, s: around * 0.08 - weak * 1.2 + provVal(CELL[c]) * 3 - km(pt, aim) / 900 + Math.random() * 0.3 });
+      }
+      scored.sort((x, y) => y.s - x.s);
+      const groups = Math.max(1, Math.floor(left.size / (total > enemy ? 3 : 5))), taken = [];
+      for (const t of scored) {
+        if (taken.length >= groups) break;
+        if (taken.some(x => km(x.pt, t.pt) < 250)) continue;
+        const team = [...left].filter(u => u.org >= 0.45).sort((x, y) => km(ll(x), t.pt) - km(ll(y), t.pt)).slice(0, 3).filter(u => km(ll(u), t.pt) < 450);
+        if (!team.length) continue;
+        const punch = pow(team) + near(ours.filter(u => !team.includes(u)), t.pt, 160) * 0.3;
+        if (punch < (t.weak * 1.3 || 0.01) * need) continue;
+        // the goal: two or three cells beyond the line, toward their capital
+        const r = bfs([t.c], j => T.side[j] === foe && canEnter(T, side, j), undefined, 3);
+        let best = t.c, bs = Infinity;
+        for (const i of r.list) { const sc = km(cellLL(i), aim) - r.d(i) * 70; if (sc < bs) { bs = sc; best = i; } }
+        for (const u of team) { left.delete(u); go(u, best); }
+        taken.push(t);
+      }
+    }
+    // 2. everyone else holds the line: posts spread along the front, more of them where the enemy presses
+    if (!left.size) return;
+    const posts = spread(F, left.size, aim);
+    posts.sort((x, y) => near(theirs, cellLL(y), 200) - near(theirs, cellLL(x), 200));
     for (const p of posts) {
       let best = null, bd = Infinity; for (const u of left) { const d = km(ll(u), cellLL(p)); if (d < bd) { bd = d; best = u; } }
-      if (best) { left.delete(best); job.set(best, p); }
-    }
-    for (const u of left) job.set(u, posts[Math.floor(Math.random() * posts.length)]);
-    // where to strike: posts where we are clearly stronger than the enemy around them
-    const strikes = [];
-    if (need < Infinity) for (const [u, p] of job) {
-      const pt = cellLL(p), mine = pow(ours.filter(x => km(ll(x), pt) < 220)), them = pow(theirs.filter(x => km(ll(x), pt) < 220)) * 1.3;
-      const r = them ? mine / them : 9;
-      if (r >= need && u.org >= 0.4) strikes.push({ u, p, r: r + Math.random() * 0.3 + (fc !== null ? 30 / (1 + km(pt, aim) / 300) * 0.02 : 0) });
-    }
-    strikes.sort((a, b) => b.r - a.r);
-    const maxStrikes = Math.max(1, Math.ceil(free.length * (total > enemy ? 0.5 : 0.3)));
-    const striking = new Set(strikes.slice(0, maxStrikes).map(s => s.u));
-    for (const [u, p] of job) {
-      let goal = p;
-      if (striking.has(u)) {
-        // a few cells into enemy land, toward their capital
-        const r = bfs(cellNb(p).filter(j => T.side[j] === foe && canEnter(T, side, j)), j => T.side[j] === foe && canEnter(T, side, j), undefined, 3);
-        let best = null, bs = Infinity;
-        for (const i of r.list) { const s = km(cellLL(i), aim) - r.d(i) * 60; if (s < bs) { bs = s; best = i; } }
-        if (best !== null) goal = best;
-      }
-      u.goalCell = goal; u.path = route(T, side, u.cell, goal) || [];
+      if (!best) break; left.delete(best); go(best, p);
     }
   }
   // ---- one season of fighting in every war ----
@@ -1680,7 +1702,7 @@
         u.path = r;
       }
       w.quiet = (w.quiet || 0) + 1;
-      for (let s = 0; s < SUB; s++) step(g, w, T);
+      for (let s = 0; s < SUB; s++) { step(g, w, T); frontForces(g, w, T); }
       supply(g, w, T);
       syncCtl(g, T);
       measure(g, w, T);
@@ -1765,6 +1787,40 @@
     g.units = g.units.filter(u => u.str > 0.04);
     reach(g, w, T);
   }
+  // ---- the front-line troops nobody sees ----
+  // Spread evenly along a side's front (w.ff, in divisions), they push the line wherever their side is stronger
+  // there - counting the divisions nearby - and hold it where it is weaker. No orders: they fight on their own.
+  // They wear down in the fighting and fill up again each season.
+  function frontForces(g, w, T) {
+    if (!w.ff) return;
+    const us = unitsOf(g, w).filter(u => u.str > 0.04), pairs = [], fronts = { att: 0, def: 0 };
+    for (const side of ['att', 'def']) {
+      const foe = FOE[side];
+      for (const i of T.cells) {
+        if (T.side[i] !== side) continue;
+        let edge = false;
+        for (const k of [1, 3, 4, 6]) { const j = NBT[i * 8 + k]; if (j >= 0 && T.side[j] === foe && canEnter(T, side, j)) { pairs.push([i, j, side]); edge = true; } }
+        if (edge) fronts[side]++;
+      }
+    }
+    if (!pairs.length) return;
+    const dens = { att: w.ff.att / Math.max(8, fronts.att), def: w.ff.def / Math.max(8, fronts.def) };
+    const local = (side, pt) => { let p = dens[side]; for (const u of us) if (sideOfU(T, u) === side) { const d = km(ll(u), pt); if (d < 140) p += unitPower(u) * 0.35 * (1 - d / 140); } return p; };
+    const loss = { att: 0, def: 0 };
+    for (let n = pairs.length - 1; n > 0; n--) { const k = Math.floor(Math.random() * (n + 1)); [pairs[n], pairs[k]] = [pairs[k], pairs[n]]; }
+    const done = new Set();
+    for (const [i, j, side] of pairs) {
+      if (done.has(j) || T.side[i] !== side || T.side[j] === side) continue;
+      const foe = FOE[side], pj = cellLL(j);
+      const mine = local(side, cellLL(i)), theirs = local(foe, pj) * (T.S[foe].includes(T.own[j]) ? 1.25 : 1);
+      loss[side] += theirs * 0.004; loss[foe] += mine * 0.004;
+      if (mine <= theirs * 1.2) continue;
+      if (Math.random() > Math.min(0.2, (mine / Math.max(0.001, theirs) - 1.2) * 0.25)) continue;
+      if (us.some(u => sideOfU(T, u) === foe && km(ll(u), pj) < CONTACT * 0.6)) continue;   // their divisions hold their own ground
+      setCell(g, w, T, j, side); done.add(j);
+    }
+    for (const side of ['att', 'def']) w.ff[side] = Math.max(0, w.ff[side] - loss[side]);
+  }
   // Every division holds the ground around it (REACH km) where it is closer than any enemy division: the front
   // settles between the armies, a few divisions hold a wide country, and to push the enemy back you beat his troops.
   function reach(g, w, T) {
@@ -1817,6 +1873,8 @@
       for (const i of pocket) if (!guards.some(u => km(ll(u), cellLL(i)) < CONTACT)) setCell(g, w, T, i, foe);
     }
     g.units = g.units.filter(u => u.str > 0.04);
+    // the front-line troops fill up again
+    if (w.ff) for (const side of ['att', 'def']) w.ff[side] = Math.min(w.ffMax[side], w.ff[side] + w.ffMax[side] * 0.12);
     // every spring a side that lost many divisions raises fresh ones
     if ((g.season || 0) === 0) for (const side of ['att', 'def']) for (const k of T.S[side]) {
       if (isHome(k) && k !== w.att && k !== w.def) continue;
