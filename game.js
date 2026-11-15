@@ -1366,7 +1366,7 @@
   const SEASONS = ['Spring', 'Summer', 'Autumn', 'Winter'];
   const DIV = 2;                                          // army points in one full-strength division
   const MAX_DIVS = 24;
-  const SPEED = 450, WINTER = 0.6;                       // km a division covers in a season; less in winter
+  const SPEED = 320, WINTER = 0.6;                       // km a division covers in a season; less in winter
   const hop = (a, b) => Math.max(150, km(PBY[a].c, PBY[b].c));                 // the way from one province to the next
   const ctrlOf = (g, id) => (g.ctl && g.ctl[id]) || stateOf(g, holderOf(g, id));
   // who fights in a war: the two states, and a superpower that sent troops
@@ -1672,8 +1672,12 @@
       const r = pa / Math.max(0.01, pd);
       for (const u of A) { u.org = Math.max(0, u.org - clamp(0.3 / r, 0.08, 0.6)); u.str = Math.max(0, u.str - clamp(0.06 / r, 0.02, 0.2)); }
       for (const u of D0) { u.org = Math.max(0, u.org - clamp(0.3 * r, 0.08, 0.6)); u.str = Math.max(0, u.str - clamp(0.06 * r, 0.02, 0.2)); }
-      const won = r > 1;
-      g.battles.push({ p: t, w: w.id, att: w[side], won }); w.quiet = 0;
+      // a province holds until its defenders are worn out: one won battle only shakes them, unless the attack is overwhelming
+      for (const u of [...A, ...D0]) u.fought = true;
+      const worn = D0.reduce((x, u) => x + u.org, 0) / D0.length < 0.3;
+      const won = r > 1 && (worn || r > 2.4);
+      const from = Object.entries(A.reduce((m, u) => (m[u.p] = (m[u.p] || 0) + 1, m), {})).sort((x, y) => y[1] - x[1])[0][0];
+      g.battles.push({ p: t, from: +from, w: w.id, att: w[side], def: w[foe], won, held: !won && r > 1, a: A.length, d: D0.length, r: Math.round(r * 100) / 100 }); w.quiet = 0;
       if (!won) { for (const u of A) { u.path = []; u.to = null; u.mv = 0; } continue; }
       // the defenders fall back to a province of their own side, away from the attackers; with nowhere to go they are destroyed
       for (const u of D0) {
@@ -1692,8 +1696,9 @@
       const reach = bfs(T, side, sources, j => T.map[j] && T.map[j].side === side);
       for (const u of unitsOf(g, w)) {
         if (!T.S[side].includes(u.k)) continue;
-        if (reach[u.p] !== undefined) { u.org = Math.min(1, u.org + 0.25); u.str = Math.min(1, u.str + (isHome(u.k) ? 0.05 : 0.03 + ((g.c[u.k] && g.c[u.k].stab) || 2) * 0.005)); u.cut = false; }
+        if (reach[u.p] !== undefined) { u.org = Math.min(1, u.org + (u.fought ? 0.08 : 0.25)); u.str = Math.min(1, u.str + (isHome(u.k) ? 0.05 : 0.03 + ((g.c[u.k] && g.c[u.k].stab) || 2) * 0.005)); u.cut = false; }
         else { u.org = Math.max(0, u.org - 0.2); u.str = Math.max(0, u.str - 0.08); u.cut = true; }
+        u.fought = false;
       }
     }
     g.units = g.units.filter(u => u.str > 0.04);

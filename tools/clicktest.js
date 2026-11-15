@@ -15,6 +15,7 @@
       if (q('[data-i]')) click('[data-i]');
       else if (q('#onward')) click('#onward');
       else if (q('#sign')) click('#sign');
+      else if (q('#offer-no')) click('#offer-no');
       else break;
       await wait(20);
     }
@@ -121,7 +122,7 @@
     click('[data-stance$="|hold"]'); await wait(30);
     check('war: stance hold', g.stance[g.wars[0].id] === 'hold');
     click('[data-stance$="|advance"]'); await wait(30);
-    for (let i = 0; i < 40 && g.wars.length && !g.over; i++) { click('#end'); await wait(120); await answer(); if (g.conf) { GAME.confAuto(g); ironCurtain.refresh(); } }
+    for (let i = 0; i < 90 && g.wars.some(w => w.att === 'IND' || w.def === 'IND') && !g.over; i++) { click('#end'); await wait(120); await answer(); if (g.conf) { GAME.confAuto(g); ironCurtain.refresh(); } }
     check('war: it ends, the divisions go home', !g.wars.some(w => w.att === 'IND' || w.def === 'IND') && !g.units.some(u => u.k === 'IND') && /Year/.test(q('#end').textContent), g.wars.length + ' wars');
   });
   // ---- a civil war fought with divisions: you are the government, then the rebels ----

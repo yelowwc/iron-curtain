@@ -45,7 +45,15 @@
   // borders between states (a region inside its country has none), coasts, and faint province lines
   const O = PT.objects.provinces;
   root.append('path').attr('class', 'coast').attr('d', path(topojson.mesh(PT, O, (a, b) => a === b)));
-  const provPath = root.append('path').attr('class', 'provline');
+  const innerPath = root.append('path').attr('class', 'innerline');
+  const innerCache = {};
+  // the borders between the lands of one state (West Germany and Bavaria, the Soviet republics...)
+  function innerBorders(state) {
+    const id = state + '|' + holdSig + '|' + D.COUNTRIES.map(d => g.c[d.key].owner || '').join(',');
+    if (innerCache[id] !== undefined) return innerCache[id];
+    const st = k => (k ? GAME.stateOf(g, k) : k);
+    return (innerCache[id] = path(topojson.mesh(PT, O, (a, b) => a !== b && a.key && b.key && a.key !== b.key && st(a.key) === state && st(b.key) === state)) || null);
+  }
   const borderPath = root.append('path').attr('class', 'border');
   let borderKey = null;
   // borders between states: annexed land shares its owner's state, so the line between them goes
@@ -55,7 +63,6 @@
     const key = (g ? D.COUNTRIES.map(d => g.c[d.key].owner || '').join(',') : '') + '|' + holdSig;
     if (key === borderKey) return; borderKey = key;
     borderPath.attr('d', path(topojson.mesh(PT, O, (a, b) => a !== b && st(a.key) !== st(b.key))));
-    provPath.attr('d', path(topojson.mesh(PT, O, (a, b) => a !== b && a.key && a.key === b.key)));
   }
   drawBorders();
   const hoverLine = root.append('path').attr('class', 'hover'), selLine = root.append('path').attr('class', 'selected');
@@ -224,7 +231,7 @@
 
   let zoomK = 1;
   const zoom = d3.zoom().scaleExtent([1, 8]).translateExtent([[0, 0], [W, H]])
-    .on('zoom', e => { root.attr('transform', e.transform); zoomK = e.transform.k; drawLabels(); root.selectAll('.usize').attr('transform', `scale(${1 / Math.sqrt(zoomK)})`); battleLayer.selectAll('text').style('font-size', 8 / zoomK + 'px'); rescale(); })
+    .on('zoom', e => { root.attr('transform', e.transform); zoomK = e.transform.k; drawLabels(); root.selectAll('.usize').attr('transform', `scale(${1 / Math.sqrt(zoomK)})`);  rescale(); })
     .on('end', () => drawCities());                                     // city names are sorted out once the zoom stops
   svg.call(zoom).on('dblclick.zoom', null);
   // hatching and capital dots keep their size on screen at any zoom
@@ -388,8 +395,9 @@
     const cv = g.conf ? GAME.confView(g) : null, claimBy = {}, canTake = new Set();
     if (cv) { for (const c of cv.claims) for (const i of c.ids || []) claimBy[i] = c.by; if (cv.myTurn) for (const o of cv.options) if (o.kind === 'take' && o.ok) canTake.add(o.target); }
     const ctl = g.ctl || {};
-    lands.attr('fill', f => claimBy[f.pid] ? colour(claimBy[f.pid]) : colour(f.key)).classed('claimed', f => !!claimBy[f.pid]).classed('claimable', f => canTake.has(f.pid))
+    lands.attr('fill', f => claimBy[f.pid] ? colour(claimBy[f.pid]) : colour(f.key)).attr('stroke', function () { return this.getAttribute('fill'); }).classed('claimed', f => !!claimBy[f.pid]).classed('claimable', f => canTake.has(f.pid))
       .classed('restless', f => !!(f.key && g.c[f.key] && g.c[f.key].owner && g.c[f.key].occ && g.c[f.key].occ.unrest >= 60));
+    innerPath.attr('d', sel && regionSel ? innerBorders(GAME.stateOf(g, sel)) : null);
     selLine.attr('d', sel ? (regionSel ? regionOutline(sel) : stateOutline(sel)) : g.nation ? stateOutline(g.nation) : null).classed('mine', !sel && !!g.nation).classed('region', !!sel && regionSel);
     // wars between countries: the winning side holds a band of the other's land along their border
     const W2 = g.wars.filter(w => center[w.att] && center[w.def]);
@@ -580,10 +588,46 @@
     for (const u of plans) { const id = u.p + '>' + u.goal; if (seen.has(id)) continue; seen.add(id); lines.push({ id, pts: [stackXY(u), ...u.path.map(pxy)], sel: unitSel.has(u.id) }); }
     planLayer.selectAll('path').data(lines, l => l.id).join('path').attr('class', l => 'plan' + (l.sel ? ' sel' : '')).attr('marker-end', 'url(#planhead)')
       .attr('d', l => 'M' + l.pts.map(p => p.join(',')).join('L'));
-    // last season's battles
-    battleLayer.selectAll('text').data(g.battles || [], b => b.w + '-' + b.p).join('text').attr('class', b => 'battle' + (b.won ? ' won' : ''))
-      .attr('x', b => pxy(b.p)[0]).attr('y', b => pxy(b.p)[1] - 6).text('✸')
-      .style('font-size', 8 / zoomK + 'px');
+    drawBattles();
+  }
+  // ---- battles: the attack arrow grows to the front, the fight flashes and smokes, a badge shows who won ----
+  const battleSpot = b => { const o = pxy(b.from === undefined ? b.p : b.from), t = pxy(b.p); return { o, m: [o[0] + (t[0] - o[0]) * 0.58, o[1] + (t[1] - o[1]) * 0.58] }; };
+  function drawBattles() {
+    const list = (g.battles || []).filter(b => GAME.PBY[b.p]), stamp = g.year * 4 + (g.season || 0);
+    const bg = battleLayer.selectAll('g.battle').data(list, b => stamp + ':' + b.w + ':' + b.p);
+    bg.exit().transition().duration(window.NO_ANIM ? 0 : 400).style('opacity', 0).remove();
+    const be = bg.enter().append('g').attr('class', b => 'battle' + (b.won ? ' won' : b.held ? ' held' : ' repulsed'));
+    // the arrow of the attack, in the attacker's colour
+    be.append('path').attr('class', 'barrow').attr('fill', b => d3.color(colour(b.att)).brighter(0.35));
+    const spot = be.append('g').attr('class', 'bspot').attr('transform', b => `translate(${battleSpot(b).m})`);
+    const inner = spot.append('g').attr('class', 'usize');
+    inner.append('circle').attr('class', 'bsmoke').attr('r', 7);
+    inner.append('circle').attr('class', 'bpulse').attr('r', 5);
+    inner.append('circle').attr('class', 'bpulse p2').attr('r', 5);
+    for (let i = 0; i < 5; i++) inner.append('circle').attr('class', 'bflash').attr('r', 1.1)
+      .attr('cx', () => (Math.random() - 0.5) * 9).attr('cy', () => (Math.random() - 0.5) * 9).style('animation-delay', () => (Math.random() * 1.2).toFixed(2) + 's');
+    inner.append('circle').attr('class', 'bbadge').attr('r', 4.4);
+    inner.append('text').attr('class', 'bicon').attr('y', 2).text('⚔');
+    spot.on('mousemove', (e, b) => battleTip(e, b)).on('mouseleave', () => hover());
+    const bm = be.merge(bg);
+    bm.select('.bbadge').attr('stroke', b => colour(b.won ? b.att : b.def));
+    bm.select('.usize').attr('transform', `scale(${1 / Math.sqrt(zoomK)})`);
+    bm.select('.bspot').attr('transform', b => `translate(${battleSpot(b).m})`);
+    const aw = 1.7 / Math.sqrt(zoomK);
+    bm.select('.barrow').attr('d', b => { const { o, m } = battleSpot(b); return fatArrow(o, m, aw); });
+    // a new season's battles: the arrows grow from the attackers to the front, then the fight flares up
+    if (!window.NO_ANIM) {
+      be.select('.barrow').transition().duration(900).ease(d3.easeCubicOut).attrTween('d', b => { const { o, m } = battleSpot(b); return t => fatArrow(o, [o[0] + (m[0] - o[0]) * Math.max(0.05, t), o[1] + (m[1] - o[1]) * Math.max(0.05, t)], aw) || ''; });
+      be.select('.bspot').style('opacity', 0).transition().delay(700).duration(300).style('opacity', 1);
+    }
+  }
+  function battleTip(e, b) {
+    const tip = $('tip'), A = GAME.nameOf(g, b.att), Dn = GAME.nameOf(g, b.def), P = GAME.PBY[b.p].name;
+    const how = b.won ? `${esc(A)} broke through and took it.` : b.held ? `${esc(A)} pushed hard, but the defenders hold on, worn down.` : `${esc(Dn)} threw the attack back.`;
+    tip.innerHTML = `<b>Battle of ${esc(P)}</b><br>${esc(A)} attacked with ${b.a} division${b.a > 1 ? 's' : ''} against ${b.d}.<br>${how}<br><span class="dim">Strength of the attack: ${b.r >= 1 ? '×' + b.r.toFixed(1) + ' the defence' : Math.round(b.r * 100) + '% of the defence'}</span>`;
+    tip.hidden = false;
+    const r = $('mapbox').getBoundingClientRect();
+    tip.style.left = Math.min(e.clientX - r.left + 14, r.width - 200) + 'px'; tip.style.top = (e.clientY - r.top + 14) + 'px';
   }
   // ---- the front: a smooth line, not province borders ----
   // For each side's land in a war, every province is a point: +1 where the enemy holds it, -1 where it is still held,
@@ -613,13 +657,20 @@
     const cell = Math.max(0.3, size / 150), pad = cell * 3;
     const gx = x0 - pad, gy = y0 - pad, gw = Math.ceil((x1 - x0 + 2 * pad) / cell) + 1, gh = Math.ceil((y1 - y0 + 2 * pad) / cell) + 1;
     const pts = z.ids.map(id => { const p = pxy(id); return [p[0], p[1], z.taken.has(id) ? 1 : -1, 1]; });
-    for (const u of z.pushes) { const p = stackXY(u); pts.push([p[0], p[1], 1, 1.8]); }
+    // divisions on the march push a bulge along their way: from where they set out to how far they got
+    const caps = z.pushes.map(u => { const o = pxy(u.p), t = stackXY(u), L = Math.hypot(t[0] - o[0], t[1] - o[1]); return { o, t, L, R: Math.max(cell * 4, L * 0.45) }; }).filter(c => c.L > cell);
     const grid = new Float64Array(gw * gh), e = cell * cell;
     for (let j = 0; j < gh; j++) for (let i = 0; i < gw; i++) {
       const px = gx + (i + 0.5) * cell, py = gy + (j + 0.5) * cell;
       let sw = 0, sv = 0;
       for (const p of pts) { const d2 = (px - p[0]) ** 2 + (py - p[1]) ** 2 + e, w = p[3] / Math.pow(d2, 1.3); sw += w; sv += w * p[2]; }
-      grid[j * gw + i] = sv / sw;
+      let v = sv / sw;
+      for (const c of caps) {
+        const dx = c.t[0] - c.o[0], dy = c.t[1] - c.o[1], k = Math.max(0, Math.min(1, ((px - c.o[0]) * dx + (py - c.o[1]) * dy) / (c.L * c.L)));
+        const d = Math.hypot(px - (c.o[0] + dx * k), py - (c.o[1] + dy * k));
+        if (d < c.R) v = Math.max(v, (1 - d / c.R) * 1.6 - 0.6);
+      }
+      grid[j * gw + i] = v;
     }
     return { grid, gx, gy, gw, gh, cell };
   }
