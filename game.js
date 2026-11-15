@@ -944,18 +944,23 @@
     const W = conf.winners.find(x => x.key === k), out = [], L = conf.lose, Lname = info(L).name, lv = valueOf(g, L);
     if (!W || W.done || whole(conf)) return out;
     const add = (kind, target, cost, name, help, ok, why, ids) => { cost = Math.round(cost); out.push({ id: kind + ':' + target, kind, target, cost, name, help, ids, ok: ok && W.pts >= cost, why: !ok ? why : W.pts < cost ? 'Not enough points' : '' }); };
-    const { pool, touching } = confReach(g, conf, k), base = pieces(pool), cap = capOf(L), room = conf.total / 3 - confLandVal(conf);
+    // land is taken province by province; the capital comes last, and whoever takes it annexes what is left of the country
+    const { pool, touching } = confReach(g, conf, k), base = pieces(pool), cap = capOf(L);
     for (const id of touching) {
-      if (cap && cap.id === id) continue;
       const rest = new Set(pool); rest.delete(id);
-      const split = rest.size > 0 && pieces(rest) > base, big = provVal(id) > room + 1e-9;
-      add('take', id, provCost(conf, k, id), `Take ${PBY[id].name}`, `${PBY[id].name} (${info(PBY[id].key).name}) becomes yours.`, !split && !big,
-        split ? 'It would cut the country in two' : 'Provinces alone may take at most a third of the country', [id]);
+      if (cap && cap.id === id) {
+        const last = rest.size === 0;
+        add('take', id, provCost(conf, k, id) + 10, `Take ${PBY[id].name}: annex ${Lname}`, `The capital, the last piece: ${Lname} disappears into your country. It may rebel later.`,
+          last && !isHome(L) && !isHome(k), isHome(k) ? 'A superpower does not annex countries' : 'The capital comes last: take everything else first', [id]);
+        continue;
+      }
+      const split = rest.size > 0 && pieces(rest) > base;
+      add('take', id, provCost(conf, k, id), `Take ${PBY[id].name}`, `${PBY[id].name} (${info(PBY[id].key).name}) becomes yours.`, !split,
+        'It would cut the country in two', [id]);
     }
     if (!isHome(L)) {
       const rest = [...pool].reduce((t, i) => t + provCost(conf, k, i), 0);
-      const reach = borders(g, k, L) || touching.size > 0, govSet = once(conf, 'puppet') || once(conf, 'gov');
-      if (!isHome(k)) add('annex', L, Math.min(rest * 0.7, 100) + 10, `Annex ${Lname}`, 'The whole country becomes yours. It may rebel later.', reach && !govSet, govSet ? 'Its government is already decided' : 'Must border your land');
+      const govSet = once(conf, 'puppet') || once(conf, 'gov');
       add('puppet', L, 22 + lv * 6, `Puppet ${Lname}`, 'A government that answers to you.', !govSet, 'Its government is already decided');
       add('gov', L, 15 + lv * 3, `New government in ${Lname}`, 'A friendly government takes power there.', !govSet, 'Its government is already decided');
     }
@@ -976,8 +981,12 @@
     for (const o of confOptions(g, conf, k)) {
       if (!o.ok) continue;
       let v = 0;
-      if (o.kind === 'take') v = provVal(o.target) * 30 * (sp ? 0.25 : 1) * (main ? 1.3 : 1);
-      if (o.kind === 'annex') v = main && conf.annexOk ? 999 : (!sp && main && conquests < 2 && lv <= valueOf(g, k) && Math.random() < 0.3 ? lv * 9 : 0);
+      if (o.kind === 'take') {
+        const mine = conf.claims.filter(c => c.by === k && c.kind === 'take').reduce((t, c) => t + provVal(c.ids[0]), 0);
+        const conquer = main && (conf.annexOk || (conf.conquer = conf.conquer !== undefined ? conf.conquer : !sp && conquests < 2 && lv <= valueOf(g, k) && Math.random() < 0.3));
+        if (!conquer && mine + provVal(o.target) > conf.total / 3 + 1e-9) continue;            // without conquest in mind: at most a third
+        v = provVal(o.target) * 30 * (sp ? 0.25 : 1) * (main ? 1.3 : 1) * (conquer ? 4 : 1);
+      }
       if (o.kind === 'puppet') v = sp ? lv * 9 + 12 : main ? lv * 5 + 6 : 0;
       if (o.kind === 'gov') v = sp ? lv * 4 + 6 : lv * 3 + 6;
       if (o.kind === 'free') v = (sp ? 3 : 1.5) * info(o.target).val + (g.c[o.target].war ? 8 : 0);
@@ -1020,12 +1029,13 @@
   // test tools and computer games: the player's seat is played by the computer too
   function confAuto(g) { const conf = g.conf; if (!conf) return; while (confStep(g, conf)); g.conf = null; applyConf(g, conf); }
   function applyConf(g, conf) {
-    const L = conf.lose, parts = [], byTaker = {};
+    const L = conf.lose, parts = [], byTaker = {}; let annexBy = null;
     const lands = loserLands(g, conf);
     for (const c of conf.claims) {
       const by = c.by, name = info(by).name;
       if (c.kind === 'take') {
         const id = c.ids[0], land = holderOf(g, id); if (!lands.includes(land)) continue;
+        if ((capOf(L) || {}).id === id) { annexBy = by; continue; }                         // the capital: the country goes with it (below)
         (byTaker[by] = byTaker[by] || []).push(id);
         const old = g.cuts.find(x => x.land === land && x.taker === by);
         if (old) old.ids.push(id); else g.cuts.push({ land, taker: by, ids: [id], year: g.year, occ: newOcc() });
@@ -1052,7 +1062,13 @@
       const t = around.size === 1 ? [...around][0] : null;
       if (t && t !== L && byTaker[t]) { byTaker[t].push(id); const old = g.cuts.find(x => x.land === L && x.taker === t); if (old) old.ids.push(id); }
     }
-    for (const t in byTaker) parts.unshift(`${info(t).name} takes ${provList(byTaker[t])}`);
+    for (const t in byTaker) if (t !== annexBy) parts.unshift(`${info(t).name} takes ${provList(byTaker[t])}`);
+    if (annexBy) {
+      g.cuts = g.cuts.filter(x => !(x.land === L && x.taker === annexBy));                // the whole land is the annexer's now
+      annex(g, annexBy, L); applyNames(g);
+      parts.unshift(`${info(annexBy).name} annexes ${ORIGINAL_NAMES[L]}`);
+      if (L === g.nation) overthrow(g, `${info(annexBy).name} annexes your country at the peace table.`);
+    }
     syncBorders(g);
     if (g.c[L] && !g.c[L].owner) { g.c[L].stab = Math.max(1, g.c[L].stab - 1); g.c[L].army = Math.min(g.c[L].army, 3); }
     if (conf.win === g.nation) g.bonus.ME += 3;

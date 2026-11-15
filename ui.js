@@ -26,13 +26,27 @@
   const path = d3.geoPath(proj);
   const defs0 = svg.select('defs');
   const clipUrl = () => null;
-  root.append('path').datum({ type: 'Sphere' }).attr('fill', 'var(--sea)').attr('d', path);
+  root.append('path').datum({ type: 'Sphere' }).attr('class', 'sphere').attr('d', path);
+  root.append('path').attr('class', 'grat').attr('d', path(d3.geoGraticule10()));
+  // ---- atmosphere: typewriter and stencil type, a dim situation-room map, the hum of the room ----
+  (function atmosphere() {
+    const fonts = document.createElement('link'); fonts.rel = 'stylesheet';
+    fonts.href = 'https://fonts.googleapis.com/css2?family=Special+Elite&family=Stardos+Stencil:wght@400;700&display=swap';
+    document.head.appendChild(fonts);
+    const box = document.getElementById('mapbox');
+    for (const id of ['tint', 'vignette', 'grain', 'alert']) { const d = document.createElement('div'); d.id = id; d.className = 'atmo'; box.appendChild(d); }
+    const card = document.createElement('div'); card.id = 'yearcard'; card.hidden = true; box.appendChild(card);
+    const mute = document.createElement('button'); mute.id = 'mute'; mute.className = 'ghost'; mute.title = 'Sound on / off';
+    const label = () => mute.textContent = window.SFX && SFX.on ? '🔊' : '🔈';
+    label(); mute.onclick = () => { if (window.SFX) SFX.toggle(); label(); };
+    const help = document.getElementById('help'); if (help) help.parentNode.insertBefore(mute, help);
+  })();
   const lands = root.append('g').selectAll('path').data(shapes).join('path')
     .attr('class', f => 'land' + (f.home ? ' click' : '')).attr('d', path).attr('fill', '#2a2e2c')
     .on('mousemove', (e, f) => hover(e, f)).on('mouseleave', () => hover())
-    .on('click', (e, f) => { if (g && g.conf && claimClick(f)) return; if (f.key) select(GAME.stateOf(g, f.key)); })
+    .on('click', (e, f) => { if (dragged) return; if (g && g.conf && claimClick(f)) return; if (f.key) select(GAME.stateOf(g, f.key)); })
     .on('dblclick', (e, f) => { if (f.key) selectRegion(f.key); })                 // double click: that region
-    .on('contextmenu', (e, f) => { e.preventDefault(); if (g && unitSel.size) orderTo(f.pid); });
+    .on('contextmenu', (e, f) => { e.preventDefault(); if (skipCtx) { skipCtx = false; return; } if (g && unitSel.size) orderTo(f.pid); });
   // who holds each province: follows the cuts; every outline cache is thrown away when it changes
   let holdSig = '';
   function syncHolders() {
@@ -46,6 +60,17 @@
   const O = PT.objects.provinces;
   root.append('path').attr('class', 'coast').attr('d', path(topojson.mesh(PT, O, (a, b) => a === b)));
   const innerPath = root.append('path').attr('class', 'innerline');
+  // at a peace conference every province shows: faint everywhere, clear on the loser's land
+  const confProv = root.append('path').attr('class', 'confprov'), confProvLoser = root.append('path').attr('class', 'confprov loser');
+  let confSig = '';
+  function confProvinces() {
+    const cv = g.conf ? GAME.confView(g) : null, sig = cv ? g.conf.town + g.conf.year + holdSig : '';
+    if (sig === confSig) return; confSig = sig;
+    if (!cv) { confProv.attr('d', null); confProvLoser.attr('d', null); return; }
+    const lose = GAME.stateOf(g, g.conf.lose), st = k => (k ? GAME.stateOf(g, k) : k);
+    confProv.attr('d', path(topojson.mesh(PT, O, (a, b) => a !== b && a.key && b.key && st(a.key) === st(b.key) && st(a.key) !== lose)));
+    confProvLoser.attr('d', path(topojson.mesh(PT, O, (a, b) => a !== b && a.key && b.key && st(a.key) === lose && st(b.key) === lose)));
+  }
   const innerCache = {};
   // the borders between the lands of one state (West Germany and Bavaria, the Soviet republics...)
   function innerBorders(state) {
@@ -230,9 +255,9 @@
   }
 
   let zoomK = 1;
-  const zoom = d3.zoom().scaleExtent([1, 8]).translateExtent([[0, 0], [W, H]])
+  const zoom = d3.zoom().scaleExtent([1, 8]).translateExtent([[0, 0], [W, H]]).filter(e => (!e.ctrlKey || e.type === 'wheel') && !e.button && !e.shiftKey)
     .on('zoom', e => { root.attr('transform', e.transform); zoomK = e.transform.k; drawLabels(); root.selectAll('.usize').attr('transform', `scale(${1 / Math.sqrt(zoomK)})`);  rescale(); })
-    .on('end', () => drawCities());                                     // city names are sorted out once the zoom stops
+    .on('end', () => { drawCities(); if (g && g.units && g.units.length) { instantUnits = true; drawWar(); } });                                     // city names are sorted out once the zoom stops
   svg.call(zoom).on('dblclick.zoom', null);
   // hatching and capital dots keep their size on screen at any zoom
   function rescale() {
@@ -398,6 +423,7 @@
     lands.attr('fill', f => claimBy[f.pid] ? colour(claimBy[f.pid]) : colour(f.key)).attr('stroke', function () { return this.getAttribute('fill'); }).classed('claimed', f => !!claimBy[f.pid]).classed('claimable', f => canTake.has(f.pid))
       .classed('restless', f => !!(f.key && g.c[f.key] && g.c[f.key].owner && g.c[f.key].occ && g.c[f.key].occ.unrest >= 60));
     innerPath.attr('d', sel && regionSel ? innerBorders(GAME.stateOf(g, sel)) : null);
+    confProvinces();
     selLine.attr('d', sel ? (regionSel ? regionOutline(sel) : stateOutline(sel)) : g.nation ? stateOutline(g.nation) : null).classed('mine', !sel && !!g.nation).classed('region', !!sel && regionSel);
     // wars between countries: the winning side holds a band of the other's land along their border
     const W2 = g.wars.filter(w => center[w.att] && center[w.def]);
@@ -553,39 +579,40 @@
     drawZones();
     const mineK = GAME.myKeys(g), units = (g.units || []);
     unitSel = new Set([...unitSel].filter(id => units.some(u => u.id === id && mineK.includes(u.k))));
-    // stacks: one counter per country, province and march
-    const st = {};
-    for (const u of units) { const id = u.k + '|' + u.p + '|' + (u.mv ? u.to : ''); (st[id] = st[id] || { id, k: u.k, p: u.p, us: [] }).us.push(u); }
-    const stacks = Object.values(st), at = {};
-    for (const x of stacks) {
-      const xy = stackXY(x.us[0]), key = Math.round(xy[0] * 2) + ',' + Math.round(xy[1] * 2), n = at[key] = (at[key] || 0) + 1;
-      x.x = xy[0] + (n - 1) * 7.5 / Math.sqrt(zoomK); x.y = xy[1];
-      x.str = x.us.reduce((s, u) => s + u.str, 0) / x.us.length; x.org = x.us.reduce((s, u) => s + u.org, 0) / x.us.length;
-      x.mine = mineK.includes(x.k); x.sel = x.us.some(u => unitSel.has(u.id)); x.cut = x.us.some(u => u.cut);
+    // one square per division; the divisions at one place stand side by side in a little block
+    const spots = {};
+    for (const u of units) { const id = u.p + '|' + (u.mv ? u.to : ''); (spots[id] = spots[id] || []).push(u); }
+    const sp = 8.6 / Math.sqrt(zoomK), pos = {};
+    for (const id in spots) {
+      const us = spots[id].sort((x, y) => (x.k < y.k ? -1 : x.k > y.k ? 1 : x.id - y.id)), c = stackXY(us[0]);
+      const n = us.length, cols = Math.ceil(Math.sqrt(n)), rows = Math.ceil(n / cols);
+      us.forEach((u, i) => { const col = i % cols, row = Math.floor(i / cols); pos[u.id] = [c[0] + (col - (cols - 1) / 2) * sp, c[1] + (row - (rows - 1) / 2) * sp]; });
     }
-    const ug = unitLayer.selectAll('g.div').data(stacks, x => x.id);
+    unitPos = pos;
+    const ug = unitLayer.selectAll('g.div').data(units, u => u.id);
     ug.exit().remove();
-    const ue = ug.enter().append('g').attr('class', 'div').attr('transform', x => `translate(${x.x},${x.y})`)
-      .on('click', (e, x) => { e.stopPropagation(); pickStack(x, e.shiftKey); })
-      .on('contextmenu', (e, x) => { e.preventDefault(); e.stopPropagation(); if (unitSel.size) orderTo(x.p); })
-      .on('mousemove', (e, x) => hoverStack(e, x)).on('mouseleave', () => hover());
+    const ue = ug.enter().append('g').attr('class', 'div').attr('transform', u => `translate(${pos[u.id]})`)
+      .on('mousedown', (e, u) => unitDown(e, u))
+      .on('click', (e, u) => { e.stopPropagation(); if (!dragged) pickUnit(u, e.shiftKey); })
+      .on('dblclick', (e, u) => { e.stopPropagation(); pickPlace(u); })
+      .on('contextmenu', (e, u) => { e.preventDefault(); e.stopPropagation(); if (skipCtx) { skipCtx = false; return; } if (unitSel.size) orderTo(u.p); })
+      .on('mousemove', (e, u) => hoverUnit(e, u)).on('mouseleave', () => hover());
     const inner = ue.append('g').attr('class', 'usize');
-    inner.append('rect').attr('class', 'ubox').attr('x', -5).attr('y', -3.5).attr('width', 10).attr('height', 7).attr('rx', 0.8);
-    inner.append('path').attr('class', 'ux').attr('d', 'M-5,-3.5L0,0M5,-3.5L0,0M-5,3.5L0,0M5,3.5L0,0');
-    inner.append('text').attr('class', 'un').attr('y', 1.9);
-    inner.append('rect').attr('class', 'ubar0').attr('x', -5).attr('y', 4.1).attr('width', 10).attr('height', 1.3);
-    inner.append('rect').attr('class', 'ubar').attr('x', -5).attr('y', 4.1).attr('height', 1.3);
-    const um = ue.merge(ug).classed('mine', x => x.mine).classed('sel', x => x.sel).classed('cut', x => x.cut);
-    um.select('.ubox').attr('fill', x => colour(x.k));
-    um.select('.un').text(x => x.us.length);
-    um.select('.ubar').attr('width', x => 10 * x.str).attr('fill', x => x.str > 0.66 ? '#7cc36b' : x.str > 0.33 ? '#e8c45a' : '#e0533c');
+    inner.append('rect').attr('class', 'ubox').attr('x', -3.5).attr('y', -3.5).attr('width', 7).attr('height', 7).attr('rx', 0.6);
+    inner.append('path').attr('class', 'ux').attr('d', 'M-3.5,-3.5L3.5,3.5M3.5,-3.5L-3.5,3.5');
+    inner.append('rect').attr('class', 'ubar0').attr('x', -3.5).attr('y', 4).attr('width', 7).attr('height', 1.2);
+    inner.append('rect').attr('class', 'ubar').attr('x', -3.5).attr('y', 4).attr('height', 1.2);
+    const um = ue.merge(ug).classed('mine', u => mineK.includes(u.k)).classed('sel', u => unitSel.has(u.id)).classed('cut', u => !!u.cut);
+    um.select('.ubox').attr('fill', u => colour(u.k));
+    um.select('.ubar').attr('width', u => 7 * u.str).attr('fill', u => u.str > 0.66 ? '#7cc36b' : u.str > 0.33 ? '#e8c45a' : '#e0533c');
     um.select('.usize').attr('transform', `scale(${1 / Math.sqrt(zoomK)})`);
-    (window.NO_ANIM ? um : um.transition().duration(700).ease(d3.easeCubicInOut)).attr('transform', x => `translate(${x.x},${x.y})`);
+    (window.NO_ANIM || instantUnits ? um : um.transition().duration(700).ease(d3.easeCubicInOut)).attr('transform', u => `translate(${pos[u.id]})`);
+    instantUnits = false;
     um.order();
     // your marching orders: a dashed line along the way
     const plans = units.filter(u => mineK.includes(u.k) && u.goal !== null && u.goal !== undefined && u.path && u.path.length);
     const seen = new Set(), lines = [];
-    for (const u of plans) { const id = u.p + '>' + u.goal; if (seen.has(id)) continue; seen.add(id); lines.push({ id, pts: [stackXY(u), ...u.path.map(pxy)], sel: unitSel.has(u.id) }); }
+    for (const u of plans) { const id = u.p + '>' + u.goal; if (seen.has(id)) continue; seen.add(id); lines.push({ id, pts: [stackXY(u), ...u.path.map(pxy)], sel: plans.some(x => x.p === u.p && x.goal === u.goal && unitSel.has(x.id)) }); }
     planLayer.selectAll('path').data(lines, l => l.id).join('path').attr('class', l => 'plan' + (l.sel ? ' sel' : '')).attr('marker-end', 'url(#planhead)')
       .attr('d', l => 'M' + l.pts.map(p => p.join(',')).join('L'));
     drawBattles();
@@ -597,6 +624,7 @@
     const bg = battleLayer.selectAll('g.battle').data(list, b => stamp + ':' + b.w + ':' + b.p);
     bg.exit().transition().duration(window.NO_ANIM ? 0 : 400).style('opacity', 0).remove();
     const be = bg.enter().append('g').attr('class', b => 'battle' + (b.won ? ' won' : b.held ? ' held' : ' repulsed'));
+    if (!be.empty() && !window.NO_ANIM && window.SFX) SFX.battles(be.size());
     // the arrow of the attack, in the attacker's colour
     be.append('path').attr('class', 'barrow').attr('fill', b => d3.color(colour(b.att)).brighter(0.35));
     const spot = be.append('g').attr('class', 'bspot').attr('transform', b => `translate(${battleSpot(b).m})`);
@@ -708,23 +736,93 @@
       });
     });
   }
-  function pickStack(x, add) {
-    if (!x.mine) { const rl = GAME.rebLand(x.k); select(rl || GAME.stateOf(g, x.k)); return; }
-    if (!add) unitSel = new Set();
-    const all = x.us.every(u => unitSel.has(u.id));
-    for (const u of x.us) all && add ? unitSel.delete(u.id) : unitSel.add(u.id);
+  // ---- your divisions: click to pick one (shift: add or drop it), double-click: all of yours there,
+  // shift + drag on the map: a box around them. Then drag an arrow from them (or with the right button
+  // from anywhere) to where they shall go; right-click on a province does the same.
+  let unitPos = {}, dragged = false, skipCtx = false, instantUnits = false;
+  const drawLayer = root.append('g').attr('class', 'drawlayer'), boxRect = svg.append('rect').attr('class', 'selbox').attr('display', 'none');
+  const mineU = u => GAME.myKeys(g).includes(u.k);
+  function pickUnit(u, add) {
+    if (!mineU(u)) { const rl = GAME.rebLand(u.k); select(rl || GAME.stateOf(g, u.k)); return; }
+    if (!add) unitSel = new Set([u.id]); else if (unitSel.has(u.id)) unitSel.delete(u.id); else unitSel.add(u.id);
     refresh();
+  }
+  function pickPlace(u) {
+    if (!mineU(u)) return;
+    unitSel = new Set((g.units || []).filter(x => mineU(x) && x.p === u.p).map(x => x.id));
+    refresh();
+  }
+  function pickAll(w) { unitSel = new Set(GAME.unitsOf(g, w).filter(mineU).map(u => u.id)); refresh(); }
+  const provinceAt = (x, y) => { const el = document.elementsFromPoint(x, y).find(e => e.classList && e.classList.contains('land')); return el && el.__data__ ? el.__data__.pid : null; };
+  const selCentre = () => { const ps = [...unitSel].map(id => unitPos[id]).filter(Boolean); return ps.length ? [d3.mean(ps, p => p[0]), d3.mean(ps, p => p[1])] : null; };
+  function unitDown(e, u) {
+    if (e.button !== 0 || !mineU(u)) return;                            // someone else's division: the map pans as usual
+    e.stopPropagation(); e.preventDefault();
+    if (!unitSel.has(u.id) && !e.shiftKey) { unitSel = new Set([u.id]); drawWar(); }
+    if (!unitSel.has(u.id)) return;
+    arrowDrag(e, 0);
+  }
+  // drag an arrow from the picked divisions to a province
+  function arrowDrag(e0, button) {
+    const from = selCentre(); if (!from) return;
+    let moved = false;
+    const move = e => {
+      if (!moved && Math.hypot(e.clientX - e0.clientX, e.clientY - e0.clientY) < 6) return;
+      moved = true;
+      const to = d3.pointer(e, root.node()), pid = provinceAt(e.clientX, e.clientY);
+      drawLayer.selectAll('path.drawarrow').data([0]).join('path').attr('class', 'drawarrow').attr('d', fatArrow(from, to, 1.5 / Math.sqrt(zoomK)) || '');
+      const tip = $('tip'), r = $('mapbox').getBoundingClientRect();
+      tip.innerHTML = pid !== null ? `<b>March to ${esc(GAME.PBY[pid].name)}</b><br>${unitSel.size} division${unitSel.size > 1 ? 's' : ''}` : 'Not here';
+      tip.hidden = false; tip.style.left = Math.min(e.clientX - r.left + 14, r.width - 200) + 'px'; tip.style.top = (e.clientY - r.top + 14) + 'px';
+    };
+    const up = e => {
+      window.removeEventListener('mousemove', move); window.removeEventListener('mouseup', up);
+      drawLayer.selectAll('path.drawarrow').remove(); $('tip').hidden = true;
+      if (!moved) return;
+      dragged = true; setTimeout(() => dragged = false, 0);
+      if (button === 2) skipCtx = true;
+      const pid = provinceAt(e.clientX, e.clientY);
+      if (pid !== null) orderTo(pid);
+    };
+    window.addEventListener('mousemove', move); window.addEventListener('mouseup', up);
+  }
+  svg.on('mousedown.orders', e => {
+    if (!g) return;
+    if (e.button === 2 && unitSel.size) { e.preventDefault(); arrowDrag(e, 2); return; }
+    if (e.button === 0 && e.shiftKey) boxDrag(e);
+  });
+  // shift + drag: a box around your divisions
+  function boxDrag(e0) {
+    e0.preventDefault();
+    const p0 = d3.pointer(e0, svg.node()); let moved = false, p1 = p0;
+    const move = e => {
+      p1 = d3.pointer(e, svg.node());
+      if (!moved && Math.hypot(p1[0] - p0[0], p1[1] - p0[1]) < 3) return;
+      moved = true;
+      boxRect.attr('display', null).attr('x', Math.min(p0[0], p1[0])).attr('y', Math.min(p0[1], p1[1])).attr('width', Math.abs(p1[0] - p0[0])).attr('height', Math.abs(p1[1] - p0[1]));
+    };
+    const up = () => {
+      window.removeEventListener('mousemove', move); window.removeEventListener('mouseup', up);
+      boxRect.attr('display', 'none');
+      if (!moved) return;
+      dragged = true; setTimeout(() => dragged = false, 0);
+      const t = d3.zoomTransform(svg.node()), x0 = Math.min(p0[0], p1[0]), x1 = Math.max(p0[0], p1[0]), y0 = Math.min(p0[1], p1[1]), y1 = Math.max(p0[1], p1[1]);
+      for (const u of g.units || []) { if (!mineU(u) || !unitPos[u.id]) continue; const [x, y] = t.apply(unitPos[u.id]); if (x >= x0 && x <= x1 && y >= y0 && y <= y1) unitSel.add(u.id); }
+      refresh();
+    };
+    window.addEventListener('mousemove', move); window.addEventListener('mouseup', up);
   }
   function orderTo(pid) {
     const n = GAME.orderUnits(g, [...unitSel], pid);
     toast(n ? `${n} division${n > 1 ? 's' : ''} march${n > 1 ? '' : 'es'} to ${GAME.PBY[pid].name}` : `They cannot get to ${GAME.PBY[pid].name}`);
     refresh();
   }
-  function hoverStack(e, x) {
-    const tip = $('tip'), P = GAME.PBY[x.p];
-    tip.innerHTML = `<b>${x.us.length} division${x.us.length > 1 ? 's' : ''} of ${esc(GAME.nameOf(g, x.k))}</b><br><span class="prov">${esc(P.name)}</span>
-      <br>Strength ${Math.round(x.str * 100)}% · readiness ${Math.round(x.org * 100)}%${x.cut ? '<br><b style="color:#e0533c">Cut off: no supply</b>' : ''}
-      ${x.us[0].mv && x.us[0].to !== null ? '<br>Marching to ' + esc(GAME.PBY[x.us[0].to].name) : ''}${x.mine ? '<br><span class="dim">Click: pick them · then right-click a province</span>' : ''}`;
+  function hoverUnit(e, u) {
+    if (dragged) return;
+    const tip = $('tip'), P = GAME.PBY[u.p];
+    tip.innerHTML = `<b>A division of ${esc(GAME.nameOf(g, u.k))}</b><br><span class="prov">${esc(P.name)}</span>
+      <br>Strength ${Math.round(u.str * 100)}% · readiness ${Math.round(u.org * 100)}%${u.cut ? '<br><b style="color:#e0533c">Cut off: no supply</b>' : ''}
+      ${u.mv && u.to !== null && u.to !== undefined ? '<br>Marching to ' + esc(GAME.PBY[u.to].name) : ''}${mineU(u) ? '<br><span class="dim">Click: pick it · shift: add · double-click: all here<br>Drag from it: draw where it goes</span>' : ''}`;
     tip.hidden = false;
     const r = $('mapbox').getBoundingClientRect();
     tip.style.left = Math.min(e.clientX - r.left + 14, r.width - 200) + 'px'; tip.style.top = (e.clientY - r.top + 14) + 'px';
@@ -736,7 +834,7 @@
     const goal = us.find(u => u.goal !== null && u.goal !== undefined), auto = us.every(u => u.auto);
     return `<div class="warbox unitcard"><b>${us.length} division${us.length > 1 ? 's' : ''} picked</b>
       <div class="sub">Strength ${Math.round(str * 100)}% · readiness ${Math.round(org * 100)}% · ${auto ? 'on front orders' : goal ? 'marching to ' + esc(GAME.PBY[goal.goal].name) : 'holding where they stand'}</div>
-      <div class="sub"><b>Right-click</b> a province to send them there. Into enemy land means attack.</div>
+      <div class="sub"><b>Drag an arrow</b> from them to where they shall go (or right-click a province). Into enemy land means attack. <b>Shift + drag</b> a box to pick more.</div>
       <div class="row"><button class="act small" data-uorder="hold"><b>Hold here</b></button><button class="act small" data-uorder="auto"><b>Front orders</b></button><button class="act small" data-uorder="none"><b>Let go</b></button></div></div>`;
   }
   function stanceHtml(sw) {
@@ -744,7 +842,8 @@
     if (!mySide) return '';
     const st = (g.stance || {})[sw.id] || 'advance', n = GAME.unitsOf(g, sw).filter(u => ks.includes(u.k)).length, foe = GAME.unitsOf(g, sw).filter(u => !S[mySide].includes(u.k)).length;
     return `<h3>Your army: ${n} division${n === 1 ? '' : 's'} <span class="sub">against ${foe}</span></h3>
-      <div class="sub">Divisions on front orders follow your generals. Pick a counter on the map (gold rim) to command it yourself.</div>
+      <div class="sub">Divisions on front orders follow your generals. Pick yours on the map (gold rim; shift + drag for a box) and drag an arrow to command them yourself.</div>
+      <button class="act small" data-uall="${sw.id}"><b>Pick all my divisions here</b></button>
       <div class="row"><button class="act small ${st === 'advance' ? 'on' : ''}" data-stance="${sw.id}|advance"><b>Advance</b><small>attack where we are stronger</small></button>
       <button class="act small ${st === 'hold' ? 'on' : ''}" data-stance="${sw.id}|hold"><b>Hold the line</b><small>defend, take back only our own land</small></button></div>`;
   }
@@ -792,9 +891,14 @@
   function topBar() {
     const t = g.tension, tc = t >= 80 ? '#ff4b3e' : t >= 55 ? '#f0a03c' : '#6fbf73';
     const fighting = GAME.playerFights(g);
+    $('mapbox').dataset.season = fighting ? ['spring', 'summer', 'autumn', 'winter'][g.season || 0] : '';
     $('year').textContent = fighting ? `${GAME.SEASONS[g.season || 0]} ${g.year}` : g.year;
     $('end').textContent = fighting ? 'End Season ▸' : 'End Year ▸';
-    $('tension').innerHTML = `Tension <span class="bar"><i style="width:${t}%;background:${tc}"></i></span><b style="color:${tc}">${Math.round(t)}</b>`;
+    const dc = t < 30 ? 5 : t < 50 ? 4 : t < 70 ? 3 : t < 85 ? 2 : 1, dcol = ['', '#ff3b2f', '#ff7a2f', '#f0c03c', '#7cc36b', '#5aa3c8'][dc];
+    $('tension').innerHTML = `<span class="defcon" style="color:${dcol};border-color:${dcol}">DEFCON ${dc}</span> <span class="bar"><i style="width:${t}%;background:${tc}"></i></span><b style="color:${tc}">${Math.round(t)}</b>`;
+    $('tension').title = 'World tension. DEFCON 5 is peace; at DEFCON 1 (tension 100) nuclear war ends the game for everyone.';
+    document.body.classList.toggle('dc2', dc === 2); document.body.classList.toggle('dc1', dc === 1);
+    if (window.SFX) SFX.tension(t);
     $('end').disabled = !!g.over || !!g.conf;
     $('end').title = g.conf ? 'Finish the peace conference first' : fighting ? 'At war, the year runs season by season (Enter)' : 'End the year (Enter)';
     $('detente').hidden = !!g.nation;
@@ -1006,6 +1110,7 @@
       if (o === 'none') unitSel = new Set(); else toast(GAME.orderUnits(g, [...unitSel], o) ? (o === 'hold' ? 'They dig in where they stand.' : 'Back on front orders.') : '');
       refresh();
     });
+    el.querySelectorAll('[data-uall]').forEach(b => b.onclick = () => { const w = GAME.fronts(g).find(x => String(x.id) === b.dataset.uall); if (w) pickAll(w); });
     el.querySelectorAll('[data-stance]').forEach(b => b.onclick = () => { const [id, st] = b.dataset.stance.split('|'); const w = GAME.fronts(g).find(x => String(x.id) === id); if (w) GAME.setStance(g, w, st); toast(st === 'hold' ? 'Hold the line: your generals defend.' : 'Advance: your generals attack where they are stronger.'); refresh(); });
   }
   function panelMain() {
@@ -1088,8 +1193,29 @@
     el.querySelectorAll('[data-prog]').forEach(b => b.onclick = () => { toast(GAME.programAct(g, g.side, b.dataset.prog)); after(); });
   }
   function after() { refresh(); if (g.over) gameOver(); }
+  let lastNews = null, typing = null;
   function newsList() {
-    $('news').innerHTML = g.news.slice(0, 40).map(n => `<li class="${n.year >= g.year - 1 ? 'now' : ''}"><span>${n.year}</span>${esc(n.text)}</li>`).join('');
+    const key = n => n.year + '|' + n.text, items = g.news.slice(0, 40);
+    let fresh = 0;
+    if (lastNews !== null) { const i = items.findIndex(n => key(n) === lastNews); fresh = i < 0 ? Math.min(items.length, 6) : i; }
+    lastNews = items.length ? key(items[0]) : '';
+    $('news').innerHTML = items.map((n, i) => `<li class="${n.year >= g.year - 1 ? 'now' : ''}${i < fresh ? ' fresh' : ''}"><span>${n.year}</span><em>${esc(n.text)}</em></li>`).join('');
+    if (!fresh || window.NO_ANIM) return;
+    if (window.SFX) { SFX.teletype(Math.min(60, 10 + fresh * 8)); if (items.slice(0, fresh).some(n => /^WAR:|rises against|takes up arms|take up arms/.test(n.text))) SFX.alarm(); }
+    // the newest line types itself out
+    const em = $('news').querySelector('li em'); if (!em) return;
+    const full = em.textContent; let k = 0; em.textContent = ''; em.classList.add('caret');
+    clearInterval(typing);
+    typing = setInterval(() => { k += 2; em.textContent = full.slice(0, k); if (k >= full.length) { clearInterval(typing); em.classList.remove('caret'); } }, 18);
+  }
+  // a new year (or, at war, a new season): a title card with the top headline
+  let cardTimer = null;
+  function yearCard(big, line) {
+    if (window.NO_ANIM) return;
+    const c = $('yearcard'); if (!c) return;
+    c.innerHTML = `<div class="yc-year">${esc(big)}</div>${line ? `<div class="yc-line">${esc(line)}</div>` : ''}`;
+    c.hidden = false; c.classList.remove('show'); void c.offsetWidth; c.classList.add('show');
+    clearTimeout(cardTimer); cardTimer = setTimeout(() => { c.hidden = true; }, 3200);
   }
   function refresh() { if (!g) return; topBar(); drawMap(); panel(); newsList(); save(); }
   let regionSel = false;
@@ -1158,7 +1284,7 @@
       <li><b>As a superpower</b>, push countries past ${GAME.BLOC} toward you to bring them into your bloc. When ${GAME.END} ends, the bigger bloc wins, and then you can keep playing into the new century.</li>
       <li><b>As a nation</b>, build your army, keep order at home, make friends, join an alliance, and maybe invade a neighbour. Don't get overthrown.</li>
       <li><b>Propaganda</b> (1 IP) and <b>Economic Aid</b> (3 IP) pull a country toward you. A superpower can also <b>Back a Coup</b> (5 IP).</li>
-      <li><b>Wars</b> are fought with <b>divisions</b> on the map, season by season (<b>End Season</b> while you are at war). Your counters have a gold rim: click one (shift: add more), then <b>right-click</b> a province to march there. Marching into enemy land is an attack. Divisions you leave alone follow your generals: <b>Advance</b> or <b>Hold the line</b>. A country falls when it loses its capital and most of its land; divisions cut off from home waste away.</li>
+      <li><b>Wars</b> are fought with <b>divisions</b> on the map, season by season (<b>End Season</b> while you are at war). Each division is a square; yours have a gold rim. Click one (shift-click: add, double-click: all there, <b>shift + drag</b>: a box), then <b>drag an arrow</b> from them to where they shall go (or right-click a province). Marching into enemy land is an attack. Divisions you leave alone follow your generals: <b>Advance</b> or <b>Hold the line</b>. A country falls when it loses its capital and most of its land; divisions cut off from home waste away.</li>
       <li>Alliances (NATO, Warsaw Pact…) defend their members.</li>
       <li><b>Civil wars</b> (⚔) are fought with divisions too: the rebels hold land in their cause's colour. Arm a side or send troops to help it win.</li>
       <li><b>Tension</b> rises with coups, invasions and crises. At 100 it is nuclear war and everyone loses. <b>Détente</b> lowers it.</li></ul>`;
@@ -1196,8 +1322,12 @@
   let waiting = false;
   function endYear() {
     if (!g || g.over || waiting || !$('modal').hidden) return;
-    const y0 = g.year;
+    const y0 = g.year, s0 = g.season || 0;
     GAME.endSeason(g); refresh();
+    if (!g.over && g.year !== y0) { const news = g.news.filter(n => n.year === g.year && !/^(You chose|Soviet Union:|United States:|Your )/.test(n.text)), big = /bomb|^WAR:|falls|Coup|dies|is dead|crisis|revolution|founded|wall|moon|orbit/i, titled = n => /^[^.!]{4,60}[.!] [A-Z]/.test(n.text);
+      const pick = news.find(n => titled(n) && big.test(n.text)) || news.find(n => big.test(n.text)) || news.find(titled) || news[news.length - 1];
+      const top = pick && titled(pick) ? { text: pick.text.split(/(?<=[.!]) /)[0] } : pick; yearCard(String(g.year), top ? top.text : ''); if (window.SFX) SFX.morse(); }
+    else if (!g.over && (g.season || 0) !== s0) yearCard(`${GAME.SEASONS[g.season || 0]} ${g.year}`, '');
     if (!g.over) toast(g.year !== y0 ? `${g.year} begins: +${g.nation ? GAME.nationIncome(g) : GAME.income(g, g.side)} IP` : `${GAME.SEASONS[g.season || 0]} ${g.year}`);
     const wait = window.NO_ANIM || window.NO_WAIT ? 0 : Math.max(0, busyUntil - performance.now());
     if (!wait) return g.over ? gameOver() : showEvents();

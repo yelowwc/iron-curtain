@@ -83,6 +83,8 @@
     GAME.startConference(g, { id: 98, att: 'POL', def: 'CSK', front: 100, years: 3, help: { att: 0, def: 0 }, troops: {}, armed: {}, capFell: {} }, 'att');
     ironCurtain.refresh(); await wait(50);
     check('peace: conference opens in the panel', !!g.conf && /Peace conference/.test(q('#panel').textContent) && q('#end').disabled);
+    check('peace: province borders shown', !!(q('path.confprov.loser') && q('path.confprov.loser').getAttribute('d')));
+    check('peace: no annex button (take provinces, capital last)', !qa('[data-demand^="annex"]').length && !/^Annex /m.test(panel()));
     const prov = qa('path.land.claimable')[0];
     check('peace: provinces to click on the map', !!prov, qa('path.land.claimable').length + ' claimable');
     if (prov) { prov.dispatchEvent(new MouseEvent('click', { bubbles: true })); await wait(50); }
@@ -117,6 +119,24 @@
     p.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true })); await wait(50);
     const mine = g.units.filter(u => u.k === 'IND' && u.goal === cap);
     check('war: right-click sends them', mine.length > 0 && qa('path.plan').length > 0, mine.length + ' marching');
+    // draw an arrow: press on a division of yours, drag to a province, let go
+    const centre = el => { const r = el.getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2]; };
+    const target = qa('path.land').map(x => x.__data__ && x.__data__.key === 'PAK' ? x : null).filter(Boolean).find(x => { const [cx, cy] = centre(x); const hit = document.elementsFromPoint(cx, cy).find(e => e.classList && e.classList.contains('land')); return hit === x; });
+    const u0 = qa('g.div.mine')[0], [ux, uy] = centre(u0), [tx, ty] = centre(target);
+    for (const u of g.units) { u.goal = null; u.path = []; }
+    u0.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, button: 0, clientX: ux, clientY: uy }));
+    window.dispatchEvent(new MouseEvent('mousemove', { clientX: (ux + tx) / 2, clientY: (uy + ty) / 2 }));
+    window.dispatchEvent(new MouseEvent('mousemove', { clientX: tx, clientY: ty }));
+    check('war: dragging shows an arrow', qa('path.drawarrow').length === 1);
+    window.dispatchEvent(new MouseEvent('mouseup', { clientX: tx, clientY: ty })); await wait(50);
+    check('war: the arrow sends them', g.units.some(u => u.k === 'IND' && u.goal === target.__data__.pid), target.__data__.pid);
+    // shift + drag: a box around all of them
+    ironCurtain.view(72, 28, 1.5); await wait(50);
+    const box = q('#map').getBoundingClientRect();
+    q('#map').dispatchEvent(new MouseEvent('mousedown', { bubbles: true, button: 0, shiftKey: true, clientX: box.left + 2, clientY: box.top + 2 }));
+    window.dispatchEvent(new MouseEvent('mousemove', { clientX: box.right - 2, clientY: box.bottom - 2 }));
+    window.dispatchEvent(new MouseEvent('mouseup', { clientX: box.right - 2, clientY: box.bottom - 2 })); await wait(50);
+    check('war: shift + drag box picks many', qa('g.div.sel').length > 1 && /picked/.test(panel()), qa('g.div.sel').length + ' picked of ' + qa('g.div.mine').length + ' mine, map ' + Math.round(box.width) + 'x' + Math.round(box.height));
     click('[data-uorder="hold"]'); await wait(30);
     check('war: hold here', g.units.filter(u => u.k === 'IND' && !u.auto && u.goal === null).length > 0);
     click('[data-stance$="|hold"]'); await wait(30);
