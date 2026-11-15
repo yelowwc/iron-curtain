@@ -116,8 +116,8 @@
     qa('g.div.mine')[0].dispatchEvent(new MouseEvent('click', { bubbles: true })); await wait(50);
     check('war: pick a division', /picked/.test(panel()) && qa('g.div.sel').length > 0);
     const cap = GAME.capPid('PAK'), p = qa('path.land').find(x => x.__data__ && x.__data__.pid === cap);
-    p.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true })); await wait(50);
-    const mine = g.units.filter(u => u.k === 'IND' && u.goal === cap);
+    { const r = p.getBoundingClientRect(); p.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: r.left + r.width / 2, clientY: r.top + r.height / 2 })); } await wait(50);
+    const mine = g.units.filter(u => u.k === 'IND' && u.goal && u.path && u.path.length);
     check('war: right-click sends them', mine.length > 0 && qa('path.plan').length > 0, mine.length + ' marching');
     // draw an arrow: press on a division of yours, drag to a province, let go
     const centre = el => { const r = el.getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2]; };
@@ -125,11 +125,13 @@
     const u0 = qa('g.div.mine')[0], [ux, uy] = centre(u0), [tx, ty] = centre(target);
     for (const u of g.units) { u.goal = null; u.path = []; }
     u0.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, button: 0, clientX: ux, clientY: uy }));
-    window.dispatchEvent(new MouseEvent('mousemove', { clientX: (ux + tx) / 2, clientY: (uy + ty) / 2 }));
+    window.dispatchEvent(new MouseEvent('mousemove', { clientX: (ux + tx) / 2 + 30, clientY: (uy + ty) / 2 }));
+    window.dispatchEvent(new MouseEvent('mousemove', { clientX: (ux + tx) / 2 + 10, clientY: (uy + ty) / 2 + 20 }));
     window.dispatchEvent(new MouseEvent('mousemove', { clientX: tx, clientY: ty }));
     check('war: dragging shows an arrow', qa('path.drawarrow').length === 1);
+    check('war: dragging draws the route', qa('path.drawroute').length === 1 && (q('path.drawroute').getAttribute('d') || '').length > 10);
     window.dispatchEvent(new MouseEvent('mouseup', { clientX: tx, clientY: ty })); await wait(50);
-    check('war: the arrow sends them', g.units.some(u => u.k === 'IND' && u.goal === target.__data__.pid), target.__data__.pid);
+    check('war: the arrow sends them', g.units.some(u => u.k === 'IND' && u.goal && u.path && u.path.length), target.__data__.pid);
     // shift + drag: a box around all of them
     ironCurtain.view(72, 28, 1.5); await wait(50);
     const box = q('#map').getBoundingClientRect();
@@ -171,7 +173,7 @@
     try { localStorage.removeItem('iron-curtain-lite-3'); } catch (e) { }
     ironCurtain.start(); await wait(50); click('[data-side="US"]'); await wait(100); await answer();
     const g = G();
-    for (let i = 0; i < 260 && g.year <= 1991 && !g.over; i++) { if (!g.season) GAME.computerTurn(g, 'US'); click('#end'); await wait(250); if (q('#onward')) break; await answer(); }
+    for (let i = 0; i < 260 && g.year <= 1991 && !g.over; i++) { if (g.conf) { GAME.confAuto(g); ironCurtain.refresh(); } if (!g.season) GAME.computerTurn(g, 'US'); click('#end'); await wait(250); if (q('#onward')) break; await answer(); }
     if (g.over) { check('verdict: reached 1992', true, 'game ended early: ' + g.over.why); return; }
     check('verdict: shown after 1991', !!q('#onward') && /end of the Cold War/i.test(q('#card').textContent), g.year);
     click('#onward'); await wait(100); await answer();

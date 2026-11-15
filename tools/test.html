@@ -42,8 +42,8 @@
 <script src="../data.js"></script>
 <script src="../provinces.js"></script>
 <script src="../neighbours.js"></script>
+<script src="../provgrid.js"></script>
 <script src="../game.js"></script>
-<script src="../sound.js"></script>
 <script src="../ui.js"></script>
 <script>
 const q=s=>document.querySelector(s); const [side,yrs,pick]=location.hash.slice(1).split(',');
@@ -74,6 +74,7 @@ const dv=location.hash.match(/divs=(\w+):(\w+):(\d+)/); if(dv){ const g=ironCurt
   const w=GAME.startWar(g,dv[1],dv[2],0);  for(let i=0;i<+dv[3];i++){ GAME.warSeason(g); g.season=(g.season+1)%4; } {const d=document.createElement("pre");d.style.cssText="position:fixed;bottom:0;right:0;z-index:99;background:#000;color:#0f0;font-size:11px;margin:0";d.textContent="ctl "+JSON.stringify(g.ctl)+" held "+JSON.stringify(w.held);document.body.appendChild(d);} document.title="DBG "+w.quiet+" "+g.units.map(u=>u.p+":"+(u.path[0])+":"+u.mv).slice(0,2).join(" ")+" "+JSON.stringify(g.stance)+" "+Object.keys(g.ctl).length; ironCurtain.refresh();
   if(location.hash.includes('pickme')){ const el=[...document.querySelectorAll('g.div.mine')][0]; if(el) el.dispatchEvent(new MouseEvent('click',{bubbles:true})); }
   if(location.hash.includes('order')){ const me=GAME.playerKey(g), u=g.units.find(x=>x.k===me); const foe=w.att===me?w.def:w.att; const cp=GAME.capPid(foe); if(u&&cp!==null){ GAME.orderUnits(g,[u.id],cp); } ironCurtain.refresh(); } }
+if(location.hash.includes("puppetit")){ const g=ironCurtain.game; g.c.IRQ.puppetOf="IRN"; g.c.AFG.puppetOf="SUN"; g.c.JOR.puppetOf="USA"; ironCurtain.refresh(); }
 const zm=location.hash.match(/z=(\w+)/); if(zm) ironCurtain.zoomTo(zm[1]);
 const mm=location.hash.match(/mode=(\w+)/); if(mm) document.querySelector('[data-mode="'+mm[1]+'"]').click();
 if(location.hash.includes('mid')){ const t0=performance.now(); while(performance.now()-t0<800); d3.timerFlush(); }

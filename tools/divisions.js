@@ -19,7 +19,7 @@ for (let i = 0; i < runs; i++) {
     if (g.conf) GAME.confAuto(g);
     GAME.endYear(g);
   }
-  for (const x of g.news) { if (/lands troops/.test(x.text)) st.landings++; if (/surrounded/.test(x.text)) st.encircled++; }
+  for (const x of g.news) { if (/lands troops/.test(x.text)) st.landings++; if (/surrounded|encircled|surrender/.test(x.text)) st.encircled++; }
   for (const id in seen) { const s = seen[id]; st.wars++; st.seasons += s.n; st.battles += s.b; st.divs += s.max; if (!s.b) st.noFight++; if (verbose) console.log(s.name, 'seasons', s.n, 'battles', s.b, 'divs', s.max, 'front', s.front); }
 }
 console.log(`${runs} games, ${st.wars} wars: avg ${(st.seasons / st.wars).toFixed(1)} seasons, ${(st.battles / st.wars).toFixed(1)} battles, ${(st.divs / st.wars).toFixed(1)} divisions; no battle at all ${st.noFight}; landings ${st.landings}; destroyed by encirclement ${st.encircled}`);

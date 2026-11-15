@@ -39,14 +39,14 @@
     const mute = document.createElement('button'); mute.id = 'mute'; mute.className = 'ghost'; mute.title = 'Sound on / off';
     const label = () => mute.textContent = window.SFX && SFX.on ? '🔊' : '🔈';
     label(); mute.onclick = () => { if (window.SFX) SFX.toggle(); label(); };
-    const help = document.getElementById('help'); if (help) help.parentNode.insertBefore(mute, help);
+    const help = document.getElementById('help'); if (help && window.SFX) help.parentNode.insertBefore(mute, help);   // sound is off for now: sound.js is not loaded
   })();
   const lands = root.append('g').selectAll('path').data(shapes).join('path')
     .attr('class', f => 'land' + (f.home ? ' click' : '')).attr('d', path).attr('fill', '#2a2e2c')
     .on('mousemove', (e, f) => hover(e, f)).on('mouseleave', () => hover())
     .on('click', (e, f) => { if (dragged) return; if (g && g.conf && claimClick(f)) return; if (f.key) select(GAME.stateOf(g, f.key)); })
     .on('dblclick', (e, f) => { if (f.key) selectRegion(f.key); })                 // double click: that region
-    .on('contextmenu', (e, f) => { e.preventDefault(); if (skipCtx) { skipCtx = false; return; } if (g && unitSel.size) orderTo(f.pid); });
+    .on('contextmenu', (e, f) => { e.preventDefault(); if (skipCtx) { skipCtx = false; return; } if (g && unitSel.size) orderTo(proj.invert(d3.pointer(e, root.node()))); });
   // who holds each province: follows the cuts; every outline cache is thrown away when it changes
   let holdSig = '';
   function syncHolders() {
@@ -331,8 +331,11 @@
     if (mapMode === 'mil') return d3.interpolateYlOrRd(0.08 + Math.min(1, g.c[key].army / (GAME.isHome(key) ? 50 : 24)) * 0.85);
     if (mapMode === 'gov') return GOV_COL[govOf(key)] || '#777';
     if (mapMode === 'stab') return STAB_COL[g.c[key].stab] || '#777';
+    const m = g.c[key].puppetOf;
+    if (m && g.c[m] && !g.c[m].owner) return puppetColour(colour(m));
     return natColour[key] || '#8d8873';
   }
+  const puppetColour = c => { const h = d3.hsl(c); h.l = Math.min(0.8, h.l + 0.16); h.s *= 0.75; return h.formatHex(); };
   function legendHtml() {
     const sw = (c, t) => `<span><i style="background:${c}"></i>${t}</span>`;
     switch (mapMode) {
@@ -342,7 +345,7 @@
       case 'gov': { const seen = new Set(D.COUNTRIES.filter(d => !g.c[d.key].owner && (g.c[d.key].independent || GAME.isHome(d.key))).map(d => govOf(d.key))); return [...seen].filter(x => GOV_COL[x]).map(x => sw(GOV_COL[x], x)).join(''); }
       case 'stab': return [1, 2, 3, 4, 5].map(i => sw(STAB_COL[i], ['', 'Chaotic', 'Shaky', 'Steady', 'Stable', 'Rock solid'][i])).join('');
     }
-    return '';
+    return D.COUNTRIES.some(d => g.c[d.key].puppetOf) ? '<span><i style="background:linear-gradient(90deg,#3d7fd6 50%,#86a8d8 50%)"></i>Lighter shade: a puppet of that colour</span>' : '';
   }
   function setMode(m) { mapMode = m; document.querySelectorAll('[data-mode]').forEach(b => b.classList.toggle('on', b.dataset.mode === m)); if (g) drawMap(); }
   document.querySelectorAll('[data-mode]').forEach(b => b.onclick = () => setMode(b.dataset.mode));
@@ -571,17 +574,14 @@
   // click to pick them (shift: add), right-click a province to send them there.
   let unitSel = new Set();
   const pxy = id => proj(GAME.PBY[id].c);
-  function stackXY(u) {
-    const a = pxy(u.p); if (u.to === null || u.to === undefined || !u.mv) return a;
-    const b = pxy(u.to), t = GAME.marchShare(u); return [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t];
-  }
+  const stackXY = u => proj([u.x, u.y]);
   function drawWar() {
     drawZones();
     const mineK = GAME.myKeys(g), units = (g.units || []);
     unitSel = new Set([...unitSel].filter(id => units.some(u => u.id === id && mineK.includes(u.k))));
     // one square per division; the divisions at one place stand side by side in a little block
     const spots = {};
-    for (const u of units) { const id = u.p + '|' + (u.mv ? u.to : ''); (spots[id] = spots[id] || []).push(u); }
+    for (const u of units) { const id = u.cell; (spots[id] = spots[id] || []).push(u); }
     const sp = 8.6 / Math.sqrt(zoomK), pos = {};
     for (const id in spots) {
       const us = spots[id].sort((x, y) => (x.k < y.k ? -1 : x.k > y.k ? 1 : x.id - y.id)), c = stackXY(us[0]);
@@ -595,7 +595,7 @@
       .on('mousedown', (e, u) => unitDown(e, u))
       .on('click', (e, u) => { e.stopPropagation(); if (!dragged) pickUnit(u, e.shiftKey); })
       .on('dblclick', (e, u) => { e.stopPropagation(); pickPlace(u); })
-      .on('contextmenu', (e, u) => { e.preventDefault(); e.stopPropagation(); if (skipCtx) { skipCtx = false; return; } if (unitSel.size) orderTo(u.p); })
+      .on('contextmenu', (e, u) => { e.preventDefault(); e.stopPropagation(); if (skipCtx) { skipCtx = false; return; } if (unitSel.size) orderTo([u.x, u.y]); })
       .on('mousemove', (e, u) => hoverUnit(e, u)).on('mouseleave', () => hover());
     const inner = ue.append('g').attr('class', 'usize');
     inner.append('rect').attr('class', 'ubox').attr('x', -3.5).attr('y', -3.5).attr('width', 7).attr('height', 7).attr('rx', 0.6);
@@ -610,18 +610,22 @@
     instantUnits = false;
     um.order();
     // your marching orders: a dashed line along the way
-    const plans = units.filter(u => mineK.includes(u.k) && u.goal !== null && u.goal !== undefined && u.path && u.path.length);
+    const plans = units.filter(u => mineK.includes(u.k) && u.goal && u.path && u.path.length);
     const seen = new Set(), lines = [];
-    for (const u of plans) { const id = u.p + '>' + u.goal; if (seen.has(id)) continue; seen.add(id); lines.push({ id, pts: [stackXY(u), ...u.path.map(pxy)], sel: plans.some(x => x.p === u.p && x.goal === u.goal && unitSel.has(x.id)) }); }
+    for (const u of plans) {
+      const id = u.cell + '>' + u.goal.join(','); if (seen.has(id)) continue; seen.add(id);
+      const way = u.path.filter((c, i) => i % 2 === 1 || i === u.path.length - 1).map(c => proj(GAME.cellLL(c)));
+      lines.push({ id, pts: [stackXY(u), ...way], sel: plans.some(x => x.cell === u.cell && x.goal === u.goal && unitSel.has(x.id)) });
+    }
     planLayer.selectAll('path').data(lines, l => l.id).join('path').attr('class', l => 'plan' + (l.sel ? ' sel' : '')).attr('marker-end', 'url(#planhead)')
-      .attr('d', l => 'M' + l.pts.map(p => p.join(',')).join('L'));
+      .attr('d', l => d3.line().curve(d3.curveCatmullRom)(l.pts));
     drawBattles();
   }
   // ---- battles: the attack arrow grows to the front, the fight flashes and smokes, a badge shows who won ----
-  const battleSpot = b => { const o = pxy(b.from === undefined ? b.p : b.from), t = pxy(b.p); return { o, m: [o[0] + (t[0] - o[0]) * 0.58, o[1] + (t[1] - o[1]) * 0.58] }; };
+  const battleSpot = b => { const t = b.x !== undefined ? proj([b.x, b.y]) : pxy(b.p), o = b.fx !== undefined ? proj([b.fx, b.fy]) : pxy(b.from === undefined ? b.p : b.from); return { o, m: [o[0] + (t[0] - o[0]) * 0.7, o[1] + (t[1] - o[1]) * 0.7] }; };
   function drawBattles() {
     const list = (g.battles || []).filter(b => GAME.PBY[b.p]), stamp = g.year * 4 + (g.season || 0);
-    const bg = battleLayer.selectAll('g.battle').data(list, b => stamp + ':' + b.w + ':' + b.p);
+    const bg = battleLayer.selectAll('g.battle').data(list, b => stamp + ':' + b.w + ':' + b.p + ':' + (b.x || 0).toFixed(1) + ':' + (b.y || 0).toFixed(1));
     bg.exit().transition().duration(window.NO_ANIM ? 0 : 400).style('opacity', 0).remove();
     const be = bg.enter().append('g').attr('class', b => 'battle' + (b.won ? ' won' : b.held ? ' held' : ' repulsed'));
     if (!be.empty() && !window.NO_ANIM && window.SFX) SFX.battles(be.size());
@@ -629,13 +633,10 @@
     be.append('path').attr('class', 'barrow').attr('fill', b => d3.color(colour(b.att)).brighter(0.35));
     const spot = be.append('g').attr('class', 'bspot').attr('transform', b => `translate(${battleSpot(b).m})`);
     const inner = spot.append('g').attr('class', 'usize');
-    inner.append('circle').attr('class', 'bsmoke').attr('r', 7);
-    inner.append('circle').attr('class', 'bpulse').attr('r', 5);
-    inner.append('circle').attr('class', 'bpulse p2').attr('r', 5);
-    for (let i = 0; i < 5; i++) inner.append('circle').attr('class', 'bflash').attr('r', 1.1)
-      .attr('cx', () => (Math.random() - 0.5) * 9).attr('cy', () => (Math.random() - 0.5) * 9).style('animation-delay', () => (Math.random() * 1.2).toFixed(2) + 's');
-    inner.append('circle').attr('class', 'bbadge').attr('r', 4.4);
-    inner.append('text').attr('class', 'bicon').attr('y', 2).text('⚔');
+    for (let i = 0; i < 4; i++) inner.append('circle').attr('class', 'bflash').attr('r', 0.8)
+      .attr('cx', () => (Math.random() - 0.5) * 8).attr('cy', () => (Math.random() - 0.5) * 8).style('animation-delay', () => (Math.random() * 1.2).toFixed(2) + 's');
+    inner.append('circle').attr('class', 'bbadge').attr('r', 3.4);
+    inner.append('text').attr('class', 'bicon').attr('y', 1.6).text('⚔');
     spot.on('mousemove', (e, b) => battleTip(e, b)).on('mouseleave', () => hover());
     const bm = be.merge(bg);
     bm.select('.bbadge').attr('stroke', b => colour(b.won ? b.att : b.def));
@@ -657,54 +658,56 @@
     const r = $('mapbox').getBoundingClientRect();
     tip.style.left = Math.min(e.clientX - r.left + 14, r.width - 200) + 'px'; tip.style.top = (e.clientY - r.top + 14) + 'px';
   }
-  // ---- the front: a smooth line, not province borders ----
-  // For each side's land in a war, every province is a point: +1 where the enemy holds it, -1 where it is still held,
-  // and divisions marching in add +1 where they are. Blended by distance, the 0 line is the front: it runs through
-  // provinces, bulges where an attack is going in, and glides to its new place each season.
+  // ---- the front, drawn from the cells of the war ----
+  // For each side's land, every cell is +1 where the enemy holds it and -1 where it is still held; the 0 line,
+  // smoothed, is the front. Clipped to that land, it meets borders and coasts exactly, and it glides to its new
+  // place each season.
   const ZONE_ROLL = 1500, zoneState = {};
   function warFields() {
-    const out = [];
+    const out = [], GR = GAME.GRID;
     for (const w of GAME.fronts(g)) {
-      const T = GAME.theatre(g, w), S = T.S, us = GAME.unitsOf(g, w);
+      const W = GAME.warCells(g, w), S = W.S;
       for (const side of ['att', 'def']) {
         if (w.civil && side === 'att') continue;                              // in a civil war all the land is the government's
         const foe = side === 'att' ? 'def' : 'att';
-        const ids = Object.keys(T.map).map(Number).filter(id => !T.map[id].home && (w.civil || S[side].includes(T.map[id].own)));
-        if (!ids.length) continue;
-        const set = new Set(ids), taken = new Set(ids.filter(id => T.map[id].side === foe));
-        const pushes = us.filter(u => S[foe].includes(u.k) && u.mv && u.to !== null && u.to !== undefined && set.has(u.to) && !taken.has(u.to));
-        if (!taken.size && !pushes.length) continue;
-        out.push({ id: 'z' + w.id + side, ids, set, taken, pushes, occ: w.civil ? w.att : w[foe], under: w.civil ? w.land : w[side] });
+        const cells = W.cells.filter(i => w.civil || S[side].includes(W.own[i]));
+        if (!cells.length) continue;
+        const taken = cells.filter(i => W.side[i] === foe);
+        if (!taken.length) continue;
+        out.push({ id: 'z' + w.id + side, cells, taken: new Set(taken), pids: new Set(cells.map(i => GAME.CELL[i])), occ: w.civil ? w.att : w[foe], under: w.civil ? w.land : w[side], GR });
       }
     }
     return out;
   }
   function fieldOf(z) {
-    const fc = { type: 'FeatureCollection', features: shapes.filter(f => z.set.has(f.pid)) };
-    const [[x0, y0], [x1, y1]] = path.bounds(fc), size = Math.max(x1 - x0, y1 - y0);
-    const cell = Math.max(0.3, size / 150), pad = cell * 3;
-    const gx = x0 - pad, gy = y0 - pad, gw = Math.ceil((x1 - x0 + 2 * pad) / cell) + 1, gh = Math.ceil((y1 - y0 + 2 * pad) / cell) + 1;
-    const pts = z.ids.map(id => { const p = pxy(id); return [p[0], p[1], z.taken.has(id) ? 1 : -1, 1]; });
-    // divisions on the march push a bulge along their way: from where they set out to how far they got
-    const caps = z.pushes.map(u => { const o = pxy(u.p), t = stackXY(u), L = Math.hypot(t[0] - o[0], t[1] - o[1]); return { o, t, L, R: Math.max(cell * 4, L * 0.45) }; }).filter(c => c.L > cell);
-    const grid = new Float64Array(gw * gh), e = cell * cell;
-    for (let j = 0; j < gh; j++) for (let i = 0; i < gw; i++) {
-      const px = gx + (i + 0.5) * cell, py = gy + (j + 0.5) * cell;
-      let sw = 0, sv = 0;
-      for (const p of pts) { const d2 = (px - p[0]) ** 2 + (py - p[1]) ** 2 + e, w = p[3] / Math.pow(d2, 1.3); sw += w; sv += w * p[2]; }
-      let v = sv / sw;
-      for (const c of caps) {
-        const dx = c.t[0] - c.o[0], dy = c.t[1] - c.o[1], k = Math.max(0, Math.min(1, ((px - c.o[0]) * dx + (py - c.o[1]) * dy) / (c.L * c.L)));
-        const d = Math.hypot(px - (c.o[0] + dx * k), py - (c.o[1] + dy * k));
-        if (d < c.R) v = Math.max(v, (1 - d / c.R) * 1.6 - 0.6);
+    const GR = z.GR, C = GR.cols;
+    let r0 = Infinity, r1 = -Infinity, c0 = Infinity, c1 = -Infinity;
+    for (const i of z.cells) { const r = Math.floor(i / C), c = i % C; if (r < r0) r0 = r; if (r > r1) r1 = r; if (c < c0) c0 = c; if (c > c1) c1 = c; }
+    r0 -= 2; r1 += 2; c0 -= 2; c1 += 2;
+    const gw = c1 - c0 + 1, gh = r1 - r0 + 1, grid = new Float64Array(gw * gh).fill(NaN);
+    for (const i of z.cells) { const r = Math.floor(i / C) - r0, c = i % C - c0; grid[r * gw + c] = z.taken.has(i) ? 1 : -1; }
+    // the values run on a little past the land, so the clipped zone meets its borders and coasts with no gap
+    for (let pass = 0; pass < 2; pass++) {
+      const next = grid.slice();
+      for (let r = 0; r < gh; r++) for (let c = 0; c < gw; c++) {
+        if (!isNaN(grid[r * gw + c])) continue;
+        let m = -Infinity; for (let dr = -1; dr <= 1; dr++) for (let dc = -1; dc <= 1; dc++) { const rr = r + dr, cc = c + dc; if (rr >= 0 && rr < gh && cc >= 0 && cc < gw) { const v = grid[rr * gw + cc]; if (!isNaN(v) && v > m) m = v; } }
+        if (m > -Infinity) next[r * gw + c] = m;
       }
-      grid[j * gw + i] = v;
+      grid.set(next);
     }
-    return { grid, gx, gy, gw, gh, cell };
+    for (let k = 0; k < grid.length; k++) if (isNaN(grid[k])) grid[k] = -1;
+    return { grid, gw, gh, lon0: GR.lon0 + c0 * GR.step, lat0: GR.lat0 - r0 * GR.step, step: GR.step };
+  }
+  // a ring from the grid, rounded off (Chaikin), then on the map
+  function smoothRing(r) {
+    let p = r;
+    for (let k = 0; k < 2; k++) { const q = []; for (let i = 0; i < p.length - 1; i++) { const a = p[i], b = p[i + 1]; q.push([a[0] * 0.75 + b[0] * 0.25, a[1] * 0.75 + b[1] * 0.25], [a[0] * 0.25 + b[0] * 0.75, a[1] * 0.25 + b[1] * 0.75]); } q.push(q[0]); p = q; }
+    return p;
   }
   function contourD(F, grid) {
     const c = d3.contours().size([F.gw, F.gh]).thresholds([0])(grid)[0];
-    return c.coordinates.map(poly => poly.map(r => 'M' + r.map(q => (F.gx + q[0] * F.cell).toFixed(2) + ',' + (F.gy + q[1] * F.cell).toFixed(2)).join('L') + 'Z').join('')).join('');
+    return c.coordinates.map(poly => poly.map(r => 'M' + smoothRing(r).map(q => { const pt = proj([F.lon0 + q[0] * F.step, F.lat0 - q[1] * F.step]); return pt ? pt[0].toFixed(2) + ',' + pt[1].toFixed(2) : '0,0'; }).join('L') + 'Z').join('')).join('');
   }
   function drawZones() {
     const zones = warFields();
@@ -712,18 +715,19 @@
     zg.exit().each(z => { const st = zoneState[z.id]; if (st && st.timer) st.timer.stop(); delete zoneState[z.id]; }).remove();
     const ze = zg.enter().append('g').attr('class', 'wzone zone');
     ze.append('clipPath').attr('id', z => 'wclip-' + z.id).append('path');
-    for (const c of ['zonefill', 'zonehatch', 'zoneglow', 'zoneline']) ze.append('path').attr('class', c).attr('clip-path', z => `url(#wclip-${z.id})`).attr('fill-rule', 'evenodd');
+    for (const c of ['zonefill', 'zonehatch', 'zoneline', 'zoneedge']) ze.append('path').attr('class', c).attr('clip-path', z => `url(#wclip-${z.id})`).attr('fill-rule', 'evenodd');
     ze.merge(zg).each(function (z) {
       const el = d3.select(this), fill = zoneColour(colour(z.occ), colour(z.under));
-      el.select('clipPath path').attr('d', mergeD(geoms.filter(x => z.set.has(x.pid))));
+      el.select('clipPath path').attr('d', mergeD(geoms.filter(x => z.pids.has(x.pid))));
       el.select('.zonefill').attr('fill', fill);
-      el.select('.zoneglow').attr('stroke', d3.color(fill).brighter(0.7));
-      const sig = [...z.taken].sort().join('.') + '|' + z.pushes.map(u => u.id + ':' + Math.round(GAME.marchShare(u) * 20)).join('.');
+      el.select('.zoneedge').attr('stroke', d3.color(colour(z.occ)).brighter(0.9));
+      const sig = z.cells.length + '|' + [...z.taken].sort((a, b) => a - b).join('.');
       let st = zoneState[z.id];
       if (st && st.sig === sig) return;
-      const F = fieldOf(z), paint = grid => { const d = contourD(F, grid); el.selectAll('.zonefill,.zonehatch,.zoneglow,.zoneline').attr('d', d); };
+      const F = fieldOf(z), paint = grid => { const d = contourD(F, grid); el.selectAll('.zonefill,.zonehatch,.zoneline,.zoneedge').attr('d', d); };
       // from where it is drawn now (or, for a new zone, from nothing) to the new line
-      const from = st && st.F.gw === F.gw && st.F.gh === F.gh ? st.cur : new Float64Array(F.grid.length).fill(-1);
+      const same = st && st.F.gw === F.gw && st.F.gh === F.gh && st.F.lon0 === F.lon0 && st.F.lat0 === F.lat0;
+      const from = same ? st.cur : new Float64Array(F.grid.length).fill(-1);
       if (st && st.timer) st.timer.stop();
       st = zoneState[z.id] = { sig, F, cur: from.slice(), timer: null };
       if (window.NO_ANIM) { st.cur = F.grid; paint(F.grid); return; }
@@ -738,7 +742,7 @@
   }
   // ---- your divisions: click to pick one (shift: add or drop it), double-click: all of yours there,
   // shift + drag on the map: a box around them. Then drag an arrow from them (or with the right button
-  // from anywhere) to where they shall go; right-click on a province does the same.
+  // from anywhere) to where they shall go; right-click on the map does the same.
   let unitPos = {}, dragged = false, skipCtx = false, instantUnits = false;
   const drawLayer = root.append('g').attr('class', 'drawlayer'), boxRect = svg.append('rect').attr('class', 'selbox').attr('display', 'none');
   const mineU = u => GAME.myKeys(g).includes(u.k);
@@ -762,27 +766,35 @@
     if (!unitSel.has(u.id)) return;
     arrowDrag(e, 0);
   }
-  // drag an arrow from the picked divisions to a province
+  // drag from the picked divisions: the line you draw is the route they take, the end is where they go
   function arrowDrag(e0, button) {
     const from = selCentre(); if (!from) return;
-    let moved = false;
+    let moved = false; const pts = [from];
     const move = e => {
       if (!moved && Math.hypot(e.clientX - e0.clientX, e.clientY - e0.clientY) < 6) return;
       moved = true;
-      const to = d3.pointer(e, root.node()), pid = provinceAt(e.clientX, e.clientY);
-      drawLayer.selectAll('path.drawarrow').data([0]).join('path').attr('class', 'drawarrow').attr('d', fatArrow(from, to, 1.5 / Math.sqrt(zoomK)) || '');
+      const to = d3.pointer(e, root.node()), pid = provinceAt(e.clientX, e.clientY), last = pts[pts.length - 1];
+      if (Math.hypot(to[0] - last[0], to[1] - last[1]) > 4 / zoomK) pts.push(to);
+      const line = pts.concat([to]), tail = line.length > 2 ? line[line.length - 3] : line[0];
+      drawLayer.selectAll('path.drawroute').data([0]).join('path').attr('class', 'drawroute').attr('d', d3.line().curve(d3.curveCatmullRom)(line.slice(0, -1)));
+      drawLayer.selectAll('path.drawarrow').data([0]).join('path').attr('class', 'drawarrow').attr('d', fatArrow(tail, to, 1.5 / Math.sqrt(zoomK)) || '');
       const tip = $('tip'), r = $('mapbox').getBoundingClientRect();
-      tip.innerHTML = pid !== null ? `<b>March to ${esc(GAME.PBY[pid].name)}</b><br>${unitSel.size} division${unitSel.size > 1 ? 's' : ''}` : 'Not here';
+      tip.innerHTML = pid !== null ? `<b>March here</b> · ${esc(GAME.PBY[pid].name)}<br>${unitSel.size} division${unitSel.size > 1 ? 's' : ''}` : 'Not here';
       tip.hidden = false; tip.style.left = Math.min(e.clientX - r.left + 14, r.width - 200) + 'px'; tip.style.top = (e.clientY - r.top + 14) + 'px';
     };
     const up = e => {
       window.removeEventListener('mousemove', move); window.removeEventListener('mouseup', up);
-      drawLayer.selectAll('path.drawarrow').remove(); $('tip').hidden = true;
+      drawLayer.selectAll('path.drawarrow,path.drawroute').remove(); $('tip').hidden = true;
       if (!moved) return;
       dragged = true; setTimeout(() => dragged = false, 0);
       if (button === 2) skipCtx = true;
-      const pid = provinceAt(e.clientX, e.clientY);
-      if (pid !== null) orderTo(pid);
+      if (provinceAt(e.clientX, e.clientY) === null) return;
+      // the route as points on the land, about 50 km apart at most a dozen of them, ending where you let go
+      const geo = pts.slice(1).concat([d3.pointer(e, root.node())]).map(p => proj.invert(p)).filter(Boolean), way = [];
+      for (const p of geo) if (!way.length || d3.geoDistance(way[way.length - 1], p) * 6371 > 50) way.push(p);
+      const end = geo[geo.length - 1]; if (!way.length || way[way.length - 1] !== end) way.push(end);
+      while (way.length > 12) way.splice(1 + Math.floor(Math.random() * (way.length - 2)), 1);
+      orderTo(way.length > 1 ? way : end);
     };
     window.addEventListener('mousemove', move); window.addEventListener('mouseup', up);
   }
@@ -812,9 +824,12 @@
     };
     window.addEventListener('mousemove', move); window.addEventListener('mouseup', up);
   }
-  function orderTo(pid) {
-    const n = GAME.orderUnits(g, [...unitSel], pid);
-    toast(n ? `${n} division${n > 1 ? 's' : ''} march${n > 1 ? '' : 'es'} to ${GAME.PBY[pid].name}` : `They cannot get to ${GAME.PBY[pid].name}`);
+  // send the picked divisions to a point ([lon, lat]) on the map
+  function orderTo(pt) {
+    if (!pt) return;
+    const endPt = Array.isArray(pt[0]) ? pt[pt.length - 1] : pt, c = GAME.cellAt(endPt[0], endPt[1]), pid = c >= 0 ? GAME.CELL[c] : -1, name = pid >= 0 ? GAME.PBY[pid].name : 'there';
+    const n = GAME.orderUnits(g, [...unitSel], pt);
+    toast(n ? `${n} division${n > 1 ? 's' : ''} march${n > 1 ? '' : 'es'} toward ${name}${Array.isArray(pt[0]) ? ' along your route' : ''}` : `They cannot get to ${name}`);
     refresh();
   }
   function hoverUnit(e, u) {
@@ -828,13 +843,14 @@
     tip.style.left = Math.min(e.clientX - r.left + 14, r.width - 200) + 'px'; tip.style.top = (e.clientY - r.top + 14) + 'px';
   }
   // the card for the divisions you picked, and the orders for a whole war
+  const placeName = pt => { const c = pt ? GAME.cellAt(pt[0], pt[1]) : -1; return c >= 0 && GAME.CELL[c] >= 0 ? GAME.PBY[GAME.CELL[c]].name : 'their goal'; };
   function unitCard() {
     const us = (g.units || []).filter(u => unitSel.has(u.id)); if (!us.length) return '';
     const str = us.reduce((s, u) => s + u.str, 0) / us.length, org = us.reduce((s, u) => s + u.org, 0) / us.length;
     const goal = us.find(u => u.goal !== null && u.goal !== undefined), auto = us.every(u => u.auto);
     return `<div class="warbox unitcard"><b>${us.length} division${us.length > 1 ? 's' : ''} picked</b>
-      <div class="sub">Strength ${Math.round(str * 100)}% · readiness ${Math.round(org * 100)}% · ${auto ? 'on front orders' : goal ? 'marching to ' + esc(GAME.PBY[goal.goal].name) : 'holding where they stand'}</div>
-      <div class="sub"><b>Drag an arrow</b> from them to where they shall go (or right-click a province). Into enemy land means attack. <b>Shift + drag</b> a box to pick more.</div>
+      <div class="sub">Strength ${Math.round(str * 100)}% · readiness ${Math.round(org * 100)}% · ${auto ? 'on front orders' : goal ? 'marching toward ' + esc(placeName(goal.goal)) : 'holding where they stand'}</div>
+      <div class="sub"><b>Drag from them to draw the route</b> they shall take; they go where you let go (or right-click a spot). Into enemy land means attack. <b>Shift + drag</b> a box to pick more.</div>
       <div class="row"><button class="act small" data-uorder="hold"><b>Hold here</b></button><button class="act small" data-uorder="auto"><b>Front orders</b></button><button class="act small" data-uorder="none"><b>Let go</b></button></div></div>`;
   }
   function stanceHtml(sw) {
@@ -878,9 +894,11 @@
       const cv = GAME.confView(g), cl = cv.claims.find(c => (c.ids || []).includes(f.pid)), o = cv.options.find(x => x.kind === 'take' && x.target === f.pid);
       confLine = cl ? `<br><b style="color:#e8c45a">Claimed by ${esc(cl.byName)}</b>` : o ? `<br><b style="color:#e8c45a">${o.ok ? 'Click to take: ' + o.cost + ' points' : esc(o.why)}</b>` : '';
     }
-    const occBy = g.ctl && g.ctl[P && P.id], here = (g.units || []).filter(u => P && u.p === P.id);
+    const ll0 = e && e.clientX !== undefined ? proj.invert(d3.pointer(e, root.node())) : null, cl = ll0 ? GAME.cellAt(ll0[0], ll0[1]) : -1;
+    const occBy = (g.cc && cl >= 0 && g.cc[cl]) || (g.ctl && g.ctl[P && P.id]), here = (g.units || []).filter(u => P && u.p === P.id);
     const warLine = (occBy ? `<br><b style="color:#f0a03c">${GAME.rebLand(occBy) ? 'Held by ' : 'Occupied by '}${esc(GAME.nameOf(g, occBy))}</b>` : '') + [...new Set(here.map(u => u.k))].map(k => `<br>${here.filter(u => u.k === k).length} division(s) of ${esc(GAME.nameOf(g, k))}`).join('') + (unitSel.size ? '<br><span class="dim">Right-click: send your divisions here</span>' : '');
-    tip.innerHTML = `<b>${esc(d.name)}${f.key === g.nation ? ' (you)' : ''}</b>${provLine}${warLine}${confLine}<br>${c.owner ? 'Part of ' + esc(GAME.info(c.owner).name) + (c.owner === g.nation ? ' (yours)' : '') : GAME.isHome(f.key) ? 'Superpower' : !c.independent ? 'Colony of ' + esc(d.colony) + ' until ' + d.indep : GAME.leaning(c.a) + (c.war ? ' · ⚔ civil war' : '')}
+    const pup = c.puppetOf ? `<br><b style="color:#e8c45a">Puppet of ${esc(GAME.info(c.puppetOf).name)}${c.puppetOf === g.nation ? ' (yours)' : ''}</b>` : '';
+    tip.innerHTML = `<b>${esc(d.name)}${f.key === g.nation ? ' (you)' : ''}</b>${pup}${provLine}${warLine}${confLine}<br>${c.owner ? 'Part of ' + esc(GAME.info(c.owner).name) + (c.owner === g.nation ? ' (yours)' : '') : GAME.isHome(f.key) ? 'Superpower' : !c.independent ? 'Colony of ' + esc(d.colony) + ' until ' + d.indep : GAME.leaning(c.a) + (c.war ? ' · ⚔ civil war' : '')}
       ${c.independent || GAME.isHome(f.key) ? `<br>Army ${Math.round(c.army)}` : ''}${ps ? '<br>' + esc(ps) : ''}${GAME.warOf(g, f.key) ? '<br>⚔ at war' : ''}${GAME.lostLand(g, f.key).map(k => '<br>Lost ' + esc(GAME.provList(k.ids || [])) + ' to ' + esc(GAME.info(k.taker).name)).join('')}${region !== f.key ? '<br><i>Region: ' + esc(GAME.info(region).name) + (g.c[region].occ && !g.c[region].occ.core ? ' · unrest ' + Math.round(g.c[region].occ.unrest) : '') + '</i>' : ''}<br><span class="dim">Double-click: this region</span>`;
     tip.hidden = false;
     const r = $('mapbox').getBoundingClientRect();
@@ -1201,7 +1219,7 @@
     lastNews = items.length ? key(items[0]) : '';
     $('news').innerHTML = items.map((n, i) => `<li class="${n.year >= g.year - 1 ? 'now' : ''}${i < fresh ? ' fresh' : ''}"><span>${n.year}</span><em>${esc(n.text)}</em></li>`).join('');
     if (!fresh || window.NO_ANIM) return;
-    if (window.SFX) { SFX.teletype(Math.min(60, 10 + fresh * 8)); if (items.slice(0, fresh).some(n => /^WAR:|rises against|takes up arms|take up arms/.test(n.text))) SFX.alarm(); }
+    if (window.SFX) { SFX.teletype(Math.min(60, 10 + fresh * 8)); if (items.slice(0, fresh).some(n => /^WAR:/.test(n.text))) SFX.alarm(); }
     // the newest line types itself out
     const em = $('news').querySelector('li em'); if (!em) return;
     const full = em.textContent; let k = 0; em.textContent = ''; em.classList.add('caret');
@@ -1284,7 +1302,7 @@
       <li><b>As a superpower</b>, push countries past ${GAME.BLOC} toward you to bring them into your bloc. When ${GAME.END} ends, the bigger bloc wins, and then you can keep playing into the new century.</li>
       <li><b>As a nation</b>, build your army, keep order at home, make friends, join an alliance, and maybe invade a neighbour. Don't get overthrown.</li>
       <li><b>Propaganda</b> (1 IP) and <b>Economic Aid</b> (3 IP) pull a country toward you. A superpower can also <b>Back a Coup</b> (5 IP).</li>
-      <li><b>Wars</b> are fought with <b>divisions</b> on the map, season by season (<b>End Season</b> while you are at war). Each division is a square; yours have a gold rim. Click one (shift-click: add, double-click: all there, <b>shift + drag</b>: a box), then <b>drag an arrow</b> from them to where they shall go (or right-click a province). Marching into enemy land is an attack. Divisions you leave alone follow your generals: <b>Advance</b> or <b>Hold the line</b>. A country falls when it loses its capital and most of its land; divisions cut off from home waste away.</li>
+      <li><b>Wars</b> are fought with <b>divisions</b> on the map, season by season (<b>End Season</b> while you are at war). Each division is a square; yours have a gold rim. Click one (shift-click: add, double-click: all there, <b>shift + drag</b>: a box), then <b>drag an arrow</b> from them to any spot (or right-click it): they march freely, and enemy troops in the way mean a battle. Divisions you leave alone follow your generals: <b>Advance</b> or <b>Hold the line</b>. Close a ring around enemy divisions and they starve and surrender; a country falls when it loses its capital and most of its land.</li>
       <li>Alliances (NATO, Warsaw Pact…) defend their members.</li>
       <li><b>Civil wars</b> (⚔) are fought with divisions too: the rebels hold land in their cause's colour. Arm a side or send troops to help it win.</li>
       <li><b>Tension</b> rises with coups, invasions and crises. At 100 it is nuclear war and everyone loses. <b>Détente</b> lowers it.</li></ul>`;

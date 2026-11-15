@@ -213,7 +213,7 @@ path.land.claimed { filter: saturate(1.3) brightness(1.1); stroke: #fff6c8; stro
 .bpulse.p2 { animation-delay: .8s; stroke: #ff6a3c; }
 .bflash { fill: #fff3b0; opacity: 0; animation: bflash 1.4s linear infinite; pointer-events: none; }
 .bbadge { fill: #14181c; stroke-width: 1.8; }
-.bicon { fill: #f3ead2; font-size: 6px; text-anchor: middle; pointer-events: none; }
+.bicon { fill: #f3ead2; font-size: 4.8px; text-anchor: middle; pointer-events: none; }
 .battle.won .bpulse { stroke: #ffd04a; }
 @keyframes bpulse { 0% { transform: scale(.4); opacity: .95; } 100% { transform: scale(2.4); opacity: 0; } }
 @keyframes bflash { 0%, 100% { opacity: 0; } 8% { opacity: 1; } 20% { opacity: 0; } }
@@ -260,3 +260,9 @@ body.dc1 .defcon { animation: blink 1s steps(1) infinite; }
 #mute { font-size: 15px; padding: 5px 9px; }
 .confprov { fill: none; stroke: rgba(10,16,22,.35); stroke-width: .5; vector-effect: non-scaling-stroke; pointer-events: none; }
 .confprov.loser { stroke: rgba(243,234,210,.75); stroke-width: .9; }
+/* a readable front: dark edge, the occupier's colour inside it, stronger hatching */
+.wzone .zonehatch { opacity: .38; }
+.wzone .zoneline { stroke: #070b0e; stroke-width: 3.4; stroke-linejoin: round; }
+.wzone .zoneedge { fill: none; stroke-width: 1.3; stroke-linejoin: round; vector-effect: non-scaling-stroke; pointer-events: none; }
+.bflash { r: .8; }
+.drawroute { fill: none; stroke: rgba(232,196,90,.9); stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; vector-effect: non-scaling-stroke; pointer-events: none; filter: drop-shadow(0 0 1px #0b141c); }
