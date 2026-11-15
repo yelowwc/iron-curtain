@@ -150,7 +150,7 @@
     try { localStorage.removeItem('iron-curtain-lite-3'); } catch (e) { }
     ironCurtain.start(); await wait(50); click('[data-side="US"]'); await wait(100); await answer();
     const g = G();
-    for (let i = 0; i < 50 && g.year <= 1991 && !g.over; i++) { GAME.computerTurn(g, 'US'); click('#end'); await wait(250); if (q('#onward')) break; await answer(); }
+    for (let i = 0; i < 260 && g.year <= 1991 && !g.over; i++) { if (!g.season) GAME.computerTurn(g, 'US'); click('#end'); await wait(250); if (q('#onward')) break; await answer(); }
     if (g.over) { check('verdict: reached 1992', true, 'game ended early: ' + g.over.why); return; }
     check('verdict: shown after 1991', !!q('#onward') && /end of the Cold War/i.test(q('#card').textContent), g.year);
     click('#onward'); await wait(100); await answer();

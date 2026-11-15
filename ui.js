@@ -64,7 +64,7 @@
     .attr('orient', 'auto').append('path').attr('d', 'M0,0 L10,5 L0,10 z').attr('fill', '#ffa040');
   defs.append('pattern').attr('id', 'occupied').attr('width', 6).attr('height', 6).attr('patternUnits', 'userSpaceOnUse').attr('patternTransform', 'rotate(-45)')
     .append('rect').attr('width', 2).attr('height', 6).attr('fill', 'rgba(0,0,0,.45)');
-  const occPath = root.append('path').attr('class', 'occhatch'), frontPath = root.append('path').attr('class', 'frontline');
+  const warZones = root.append('g').attr('class', 'warzones');
   const fronts = root.append('g'), arrows = root.append('g');
   const wars = root.append('g'), towns = root.append('g'), capitals = root.append('g'), labels = root.append('g'), cityLabels = root.append('g');
   const planLayer = root.append('g'), battleLayer = root.append('g'), unitLayer = root.append('g');
@@ -388,7 +388,7 @@
     const cv = g.conf ? GAME.confView(g) : null, claimBy = {}, canTake = new Set();
     if (cv) { for (const c of cv.claims) for (const i of c.ids || []) claimBy[i] = c.by; if (cv.myTurn) for (const o of cv.options) if (o.kind === 'take' && o.ok) canTake.add(o.target); }
     const ctl = g.ctl || {};
-    lands.attr('fill', f => claimBy[f.pid] ? colour(claimBy[f.pid]) : ctl[f.pid] ? zoneColour(colour(ctl[f.pid]), colour(f.key)) : colour(f.key)).classed('claimed', f => !!claimBy[f.pid]).classed('claimable', f => canTake.has(f.pid))
+    lands.attr('fill', f => claimBy[f.pid] ? colour(claimBy[f.pid]) : colour(f.key)).classed('claimed', f => !!claimBy[f.pid]).classed('claimable', f => canTake.has(f.pid))
       .classed('restless', f => !!(f.key && g.c[f.key] && g.c[f.key].owner && g.c[f.key].occ && g.c[f.key].occ.unrest >= 60));
     selLine.attr('d', sel ? (regionSel ? regionOutline(sel) : stateOutline(sel)) : g.nation ? stateOutline(g.nation) : null).classed('mine', !sel && !!g.nation).classed('region', !!sel && regionSel);
     // wars between countries: the winning side holds a band of the other's land along their border
@@ -542,10 +542,7 @@
     const b = pxy(u.to), t = GAME.marchShare(u); return [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t];
   }
   function drawWar() {
-    const ctl = g.ctl || {}, tag = {};
-    for (const w of GAME.fronts(g)) { const T = GAME.theatre(g, w); for (const id in T.map) if (T.map[id].side) tag[id] = w.id + ':' + T.map[id].side; }
-    occPath.attr('d', Object.keys(ctl).length ? mergeD(geoms.filter(x => ctl[x.pid])) : null);
-    frontPath.attr('d', path(topojson.mesh(PT, O, (a, b) => { const x = tag[a.pid], y = tag[b.pid]; return a !== b && x && y && x !== y && x.split(':')[0] === y.split(':')[0]; })));
+    drawZones();
     const mineK = GAME.myKeys(g), units = (g.units || []);
     unitSel = new Set([...unitSel].filter(id => units.some(u => u.id === id && mineK.includes(u.k))));
     // stacks: one counter per country, province and march
@@ -587,6 +584,78 @@
     battleLayer.selectAll('text').data(g.battles || [], b => b.w + '-' + b.p).join('text').attr('class', b => 'battle' + (b.won ? ' won' : ''))
       .attr('x', b => pxy(b.p)[0]).attr('y', b => pxy(b.p)[1] - 6).text('✸')
       .style('font-size', 8 / zoomK + 'px');
+  }
+  // ---- the front: a smooth line, not province borders ----
+  // For each side's land in a war, every province is a point: +1 where the enemy holds it, -1 where it is still held,
+  // and divisions marching in add +1 where they are. Blended by distance, the 0 line is the front: it runs through
+  // provinces, bulges where an attack is going in, and glides to its new place each season.
+  const ZONE_ROLL = 1500, zoneState = {};
+  function warFields() {
+    const out = [];
+    for (const w of GAME.fronts(g)) {
+      const T = GAME.theatre(g, w), S = T.S, us = GAME.unitsOf(g, w);
+      for (const side of ['att', 'def']) {
+        if (w.civil && side === 'att') continue;                              // in a civil war all the land is the government's
+        const foe = side === 'att' ? 'def' : 'att';
+        const ids = Object.keys(T.map).map(Number).filter(id => !T.map[id].home && (w.civil || S[side].includes(T.map[id].own)));
+        if (!ids.length) continue;
+        const set = new Set(ids), taken = new Set(ids.filter(id => T.map[id].side === foe));
+        const pushes = us.filter(u => S[foe].includes(u.k) && u.mv && u.to !== null && u.to !== undefined && set.has(u.to) && !taken.has(u.to));
+        if (!taken.size && !pushes.length) continue;
+        out.push({ id: 'z' + w.id + side, ids, set, taken, pushes, occ: w.civil ? w.att : w[foe], under: w.civil ? w.land : w[side] });
+      }
+    }
+    return out;
+  }
+  function fieldOf(z) {
+    const fc = { type: 'FeatureCollection', features: shapes.filter(f => z.set.has(f.pid)) };
+    const [[x0, y0], [x1, y1]] = path.bounds(fc), size = Math.max(x1 - x0, y1 - y0);
+    const cell = Math.max(0.3, size / 150), pad = cell * 3;
+    const gx = x0 - pad, gy = y0 - pad, gw = Math.ceil((x1 - x0 + 2 * pad) / cell) + 1, gh = Math.ceil((y1 - y0 + 2 * pad) / cell) + 1;
+    const pts = z.ids.map(id => { const p = pxy(id); return [p[0], p[1], z.taken.has(id) ? 1 : -1, 1]; });
+    for (const u of z.pushes) { const p = stackXY(u); pts.push([p[0], p[1], 1, 1.8]); }
+    const grid = new Float64Array(gw * gh), e = cell * cell;
+    for (let j = 0; j < gh; j++) for (let i = 0; i < gw; i++) {
+      const px = gx + (i + 0.5) * cell, py = gy + (j + 0.5) * cell;
+      let sw = 0, sv = 0;
+      for (const p of pts) { const d2 = (px - p[0]) ** 2 + (py - p[1]) ** 2 + e, w = p[3] / Math.pow(d2, 1.3); sw += w; sv += w * p[2]; }
+      grid[j * gw + i] = sv / sw;
+    }
+    return { grid, gx, gy, gw, gh, cell };
+  }
+  function contourD(F, grid) {
+    const c = d3.contours().size([F.gw, F.gh]).thresholds([0])(grid)[0];
+    return c.coordinates.map(poly => poly.map(r => 'M' + r.map(q => (F.gx + q[0] * F.cell).toFixed(2) + ',' + (F.gy + q[1] * F.cell).toFixed(2)).join('L') + 'Z').join('')).join('');
+  }
+  function drawZones() {
+    const zones = warFields();
+    const zg = warZones.selectAll('g.wzone').data(zones, z => z.id);
+    zg.exit().each(z => { const st = zoneState[z.id]; if (st && st.timer) st.timer.stop(); delete zoneState[z.id]; }).remove();
+    const ze = zg.enter().append('g').attr('class', 'wzone zone');
+    ze.append('clipPath').attr('id', z => 'wclip-' + z.id).append('path');
+    for (const c of ['zonefill', 'zonehatch', 'zoneglow', 'zoneline']) ze.append('path').attr('class', c).attr('clip-path', z => `url(#wclip-${z.id})`).attr('fill-rule', 'evenodd');
+    ze.merge(zg).each(function (z) {
+      const el = d3.select(this), fill = zoneColour(colour(z.occ), colour(z.under));
+      el.select('clipPath path').attr('d', mergeD(geoms.filter(x => z.set.has(x.pid))));
+      el.select('.zonefill').attr('fill', fill);
+      el.select('.zoneglow').attr('stroke', d3.color(fill).brighter(0.7));
+      const sig = [...z.taken].sort().join('.') + '|' + z.pushes.map(u => u.id + ':' + Math.round(GAME.marchShare(u) * 20)).join('.');
+      let st = zoneState[z.id];
+      if (st && st.sig === sig) return;
+      const F = fieldOf(z), paint = grid => { const d = contourD(F, grid); el.selectAll('.zonefill,.zonehatch,.zoneglow,.zoneline').attr('d', d); };
+      // from where it is drawn now (or, for a new zone, from nothing) to the new line
+      const from = st && st.F.gw === F.gw && st.F.gh === F.gh ? st.cur : new Float64Array(F.grid.length).fill(-1);
+      if (st && st.timer) st.timer.stop();
+      st = zoneState[z.id] = { sig, F, cur: from.slice(), timer: null };
+      if (window.NO_ANIM) { st.cur = F.grid; paint(F.grid); return; }
+      busyUntil = Math.max(busyUntil, performance.now() + ZONE_ROLL);
+      st.timer = d3.timer(t => {
+        const u = d3.easeCubicInOut(Math.min(1, t / ZONE_ROLL)), cur = st.cur;
+        for (let i = 0; i < cur.length; i++) cur[i] = from[i] + (F.grid[i] - from[i]) * u;
+        paint(cur);
+        if (u >= 1) { st.timer.stop(); st.timer = null; st.cur = F.grid.slice(); }
+      });
+    });
   }
   function pickStack(x, add) {
     if (!x.mine) { const rl = GAME.rebLand(x.k); select(rl || GAME.stateOf(g, x.k)); return; }
