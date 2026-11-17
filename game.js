@@ -233,7 +233,7 @@
     return n;
   }
   function income(g, side) {
-    let n = (side === 'SU' ? 14.3 : 8.9) + (g.pw ? g.pw[side].econ / (side === 'SU' ? 30 : 50) : 1.8);   // the Soviet planned economy starts with fewer friends but more to spend; both grow with the economy
+    let n = (side === 'SU' ? 14.3 : 8.1) + (g.pw ? g.pw[side].econ / (side === 'SU' ? 30 : 50) : 1.8);   // the Soviet planned economy starts with fewer friends but more to spend; both grow with the economy
     for (const d of D.COUNTRIES) if (blocOf(g, d.key) === side) n += d.val * 0.25;
     return Math.round(n + modOf(g, HOME[side], 'income'));
   }
@@ -908,7 +908,7 @@
   function peaceChance(g, w, picks) {
     const me = playerKey(g), side = w.att === me ? 'att' : 'def', score = warScore(w, side);
     const enemy = w.att === me ? w.def : w.att, cost = picks.reduce((t, id) => t + termCost(g, me, enemy, id), 0);
-    const tired = w.years * 6;
+    const ex = w.ex || { att: 0, def: 0 }, tired = w.years * 3 + ex[side === 'att' ? 'def' : 'att'] * 0.6;   // a tired enemy gives more
     return score >= 0 ? cost <= score + tired : cost === 0 && -score <= 20 + tired;
   }
   function proposePeace(g, picks) {
@@ -952,7 +952,7 @@
     const w = g.wars.find(x => x.att === me || x.def === me); if (!w || w.years < 2 || g.over || Math.random() < 0.5) return;
     const mySide = w.att === me ? 'att' : 'def', score = warScore(w, mySide), enemy = w[mySide === 'att' ? 'def' : 'att'];
     if (Math.abs(score) < 25) return;
-    const [win, lose] = score > 0 ? [me, enemy] : [enemy, me], budget = Math.abs(score) + w.years * 4;
+    const [win, lose] = score > 0 ? [me, enemy] : [enemy, me], ex = w.ex || { att: 0, def: 0 }, budget = Math.abs(score) + w.years * 2 + ex[score > 0 ? (mySide === 'att' ? 'def' : 'att') : mySide] * 0.5;
     const picks = [];
     let spent = 0;
     for (const t of termsFor(g, win, lose)) {
@@ -1697,7 +1697,7 @@
     const pow = list => list.reduce((s, u) => s + unitPower(u), 0);
     const ff = w.ff || { att: 0, def: 0 };
     const total = pow(ours) + ff[side] * 0.5, enemy = pow(theirs) + ff[foe] * 0.5;
-    const need = stance === 'hold' ? Infinity : (total < enemy * 0.7 ? 1.6 : 1) * (side === 'att' ? 0.85 : 1.15) * Math.max(0.55, 1 - (w.quiet || 0) * 0.06);
+    const need = stance === 'hold' ? Infinity : (total < enemy * 0.7 ? 1.6 : 1) * (side === 'att' ? 0.85 : 1.15) * Math.max(0.55, 1 - (w.quiet || 0) * 0.06) * (1 + Math.max(0, ((w.ex && w.ex[side]) || 0) - 50) / 50);   // a tired army attacks less
     const go = (u, cell) => { u.goalCell = cell; u.path = route(T, side, u.cell, cell) || []; };
     // cut off: break out toward home first
     const free = [];
@@ -1731,11 +1731,14 @@
         scored.push({ c, pt, weak, s: around * 0.08 - weak * 1.2 + provVal(CELL[c]) * 3 - km(pt, aim) / 900 + Math.random() * 0.3 });
       }
       scored.sort((x, y) => y.s - x.s);
-      const groups = Math.max(1, Math.floor(left.size / (total > enemy ? 3 : 5))), taken = [];
+      // most of the army stays on the line: at most a quarter (a third when clearly stronger) goes on strikes
+      const spare = Math.floor(left.size * (total > enemy * 1.3 ? 0.34 : 0.25));
+      const groups = Math.max(left.size >= 4 ? 1 : 0, Math.floor(spare / 2)), taken = [];
+      let striking = 0;
       for (const t of scored) {
-        if (taken.length >= groups) break;
-        if (taken.some(x => km(x.pt, t.pt) < 250)) continue;
-        const team = [...left].filter(u => u.org >= 0.45).sort((x, y) => km(ll(x), t.pt) - km(ll(y), t.pt)).slice(0, 3).filter(u => km(ll(u), t.pt) < 450);
+        if (taken.length >= groups || striking >= Math.max(2, spare)) break;
+        if (taken.some(x => km(x.pt, t.pt) < 300)) continue;
+        const team = [...left].filter(u => u.org >= 0.45).sort((x, y) => km(ll(x), t.pt) - km(ll(y), t.pt)).slice(0, Math.min(3, Math.max(2, spare - striking))).filter(u => km(ll(u), t.pt) < 300);
         if (!team.length) continue;
         const punch = pow(team) + near(ours.filter(u => !team.includes(u)), t.pt, 160) * 0.3;
         if (punch < (t.weak * 1.3 || 0.01) * need) continue;
@@ -1743,17 +1746,35 @@
         const r = bfs([t.c], j => T.side[j] === foe && canEnter(T, side, j), undefined, 3);
         let best = t.c, bs = Infinity;
         for (const i of r.list) { const sc = km(cellLL(i), aim) - r.d(i) * 70; if (sc < bs) { bs = sc; best = i; } }
-        for (const u of team) { left.delete(u); go(u, best); }
+        // side by side, not on one spot: each of the group aims at its own cell around the goal
+        const tips = [best, ...cellNb(best).filter(j => T.side[j] === foe && canEnter(T, side, j))];
+        team.forEach((u, n) => { left.delete(u); go(u, tips[(n * 3) % tips.length]); });
+        striking += team.length;
         taken.push(t);
       }
     }
-    // 2. everyone else holds the line: posts spread along the front, more of them where the enemy presses
+    // 2. everyone else holds the line: one post each, spread evenly along the whole front (where the front is
+    // short, two share a post). A division already standing near a free post keeps it, so the line does not shuffle.
     if (!left.size) return;
     const posts = spread(F, left.size, aim);
-    posts.sort((x, y) => near(theirs, cellLL(y), 200) - near(theirs, cellLL(x), 200));
-    for (const p of posts) {
-      let best = null, bd = Infinity; for (const u of left) { const d = km(ll(u), cellLL(p)); if (d < bd) { bd = d; best = u; } }
-      if (!best) break; left.delete(best); go(best, p);
+    // a short front has fewer spots than divisions: the rest form a second (and third) line just behind it
+    const fs = new Set(F);
+    for (let ring = 0; ring < 2 && posts.length < left.size; ring++) {
+      const back = new Set();
+      for (const i of fs) for (const j of cellNb(i)) if (!fs.has(j) && T.side[j] === side && canEnter(T, side, j)) back.add(j);
+      if (!back.size) break;
+      posts.push(...spread([...back], left.size - posts.length, aim));
+      for (const j of back) fs.add(j);
+    }
+    const n0 = posts.length;
+    while (posts.length < left.size && n0) posts.push(posts[posts.length % n0]);
+    const pairs = [];
+    for (const p of posts) for (const u of left) pairs.push([km(ll(u), cellLL(p)) - near(theirs, cellLL(p), 200) * 15, p, u]);
+    pairs.sort((x, y) => x[0] - y[0]);
+    const used = new Map();
+    for (const [, p, u] of pairs) {
+      if (!left.has(u) || (used.get(p) || 0) >= posts.filter(x => x === p).length) continue;
+      used.set(p, (used.get(p) || 0) + 1); left.delete(u); go(u, p);
     }
   }
   // ---- one season of fighting in every war ----
@@ -1785,10 +1806,15 @@
         u.path = r;
       }
       w.quiet = (w.quiet || 0) + 1;
+      const snap = new Map(unitsOf(g, w).map(u => [u, u.str])), lost = { att: 0, def: 0 };
+      const count = () => { const live = new Set(g.units); for (const [u, s] of snap) { const now = live.has(u) ? u.str : 0; if (now < s) lost[sideOfU(T, u)] += s - now; snap.set(u, now); } };
       for (let s = 0; s < SUB; s++) { step(g, w, T); frontForces(g, w, T); }
+      count();
       supply(g, w, T);
+      count();
       syncCtl(g, T);
       measure(g, w, T);
+      if (!w.outcome) weariness(g, w, T, lost);
     }
     // a war ends when one side is beaten, or after enough years: a truce
     for (const w of fronts(g)) {
@@ -1941,7 +1967,7 @@
       const pocket = mine.filter(i => !inReach.has(i));
       const ours = unitsOf(g, w).filter(u => T.S[side].includes(u.k)); let trapped = 0, gave = 0, where = null;
       for (const u of ours) {
-        if (inReach.has(u.cell)) { u.org = Math.min(1, u.org + (u.fought ? 0.08 : 0.25)); u.str = Math.min(1, u.str + (isHome(u.k) ? 0.05 : 0.03 + ((g.c[u.k] && g.c[u.k].stab) || 2) * 0.005)); u.cut = false; }
+        if (inReach.has(u.cell)) { u.org = Math.min(1, u.org + (u.fought ? 0.08 : 0.25) * (1 - ((w.ex && w.ex[side]) || 0) / 250)); u.str = Math.min(1, u.str + (isHome(u.k) ? 0.05 : 0.03 + ((g.c[u.k] && g.c[u.k].stab) || 2) * 0.005)); u.cut = false; }
         else {
           u.org = Math.max(0, u.org - 0.25); u.str = Math.max(0, u.str - 0.1);
           if (!u.cut) { trapped++; where = CELL[u.cell]; }
@@ -1958,7 +1984,7 @@
     }
     g.units = g.units.filter(u => u.str > 0.04);
     // the front-line troops fill up again
-    if (w.ff) for (const side of ['att', 'def']) w.ff[side] = Math.min(w.ffMax[side], w.ff[side] + w.ffMax[side] * 0.12);
+    if (w.ff) for (const side of ['att', 'def']) w.ff[side] = Math.min(w.ffMax[side], w.ff[side] + w.ffMax[side] * 0.12 * (1 - ((w.ex && w.ex[side]) || 0) / 200));
     // every spring a side that lost many divisions raises fresh ones
     if ((g.season || 0) === 0) for (const side of ['att', 'def']) for (const k of T.S[side]) {
       if (isHome(k) && k !== w.att && k !== w.def) continue;
@@ -2014,7 +2040,46 @@
     if (beaten('def')) w.outcome = 'att';
     else if (beaten('att')) w.outcome = 'def';
     else if (w.limited && share('def') >= 0.15 && w.years >= 1) w.outcome = 'att';
-    else if (w.years >= (w.limited ? 3 : 8)) w.outcome = 'truce';
+    else if (w.years >= (w.limited ? 3 : 12)) w.outcome = 'truce';
+  }
+  // ---- war exhaustion (0-100 a side): the people tire of the war ----
+  // It grows every season, faster with the divisions lost, the land the enemy holds and a fallen capital, and
+  // slower for a side that is winning ground. Shaky states tire sooner, rebels and superpowers later. A tired
+  // army attacks less and recovers slower; at 100 the side must make peace - and if it has lost land, it loses.
+  const EX_WARN = 60, EX_HIT = 80;
+  function exMult(g, w, T, side) {
+    const k = w[side];
+    if (w.civil && side === 'att') return 0.6;                              // guerrillas outlast governments
+    if (isHome(k)) { const p = k === 'USA' ? 'US' : 'SU'; return clamp(1.3 - ((g.pw && g.pw[p] && g.pw[p].home) || 60) / 100, 0.5, 1.1); }
+    const c = g.c[k]; return c ? clamp(1.3 - (c.stab || 2) * 0.1, 0.75, 1.2) : 1;
+  }
+  function weariness(g, w, T, lost) {
+    w.ex = w.ex || { att: 0, def: 0 }; w.exSaid = w.exSaid || {}; w.seasons = (w.seasons || 0) + 1;
+    const base = side => Math.max(4, T.S[side].reduce((s, k) => s + ((w.base && w.base[k]) || 0) * (isHome(k) && k !== w.att && k !== w.def ? 0.5 : 1), 0));
+    const held = w.held || { att: 0, def: 0 };
+    for (const side of ['att', 'def']) {
+      const foe = FOE[side], theirs = held[foe], ours = held[side];
+      // a long war wears on everyone: each season weighs a little more than the last
+      const gain = 1.5 + w.seasons * 0.2 + 55 * lost[side] / base(side) + 8 * theirs + (w.capFell && w.capFell[side] ? 4 : 0) - 4 * ours;
+      w.ex[side] = clamp(w.ex[side] + Math.max(0.8, gain) * exMult(g, w, T, side), 0, 100);
+
+      if (w.ex[side] >= EX_WARN && !w.exSaid[side]) { w.exSaid[side] = 1; say(g, `War weariness in ${w.civil && side === 'att' ? 'the rebel camp' : info(w[side]).name}: people want the war in ${info(w.civil ? w.land : w[foe]).name} to end.`); }
+      if (w.ex[side] >= EX_HIT && w.exSaid[side] < 2) { w.exSaid[side] = 2; const k = w[side]; if (!isHome(k) && g.c[k] && !rebLand(k)) g.c[k].stab = Math.max(1, g.c[k].stab - 1); say(g, `Protests against the war in ${w.civil && side === 'att' ? 'the rebel camp' : info(w[side]).name}. Soldiers desert.`); }
+    }
+    // the more tired side gives up first
+    const s = ['att', 'def'].filter(x => w.ex[x] >= 100).sort((a, b) => w.ex[b] - w.ex[a] || held[b] - held[a])[0];
+    if (!s) return;
+    const foe = FOE[s], lostLand = held[foe], who = w.civil ? (s === 'att' ? 'The rebels' : `The government of ${info(w.land).name}`) : info(w[s]).name;
+    w.gaveUp = s;
+    if (w.civil) {
+      const rebelLand = held.att;                                          // in a civil war what counts is how much the rebels hold
+      w.outcome = s === 'att' ? (rebelLand < 0.15 ? 'def' : 'truce') : (rebelLand >= 0.3 ? 'att' : 'truce');
+      say(g, `${who} ${s === 'att' ? 'can fight no more' : 'is worn out by the war'} and ${w.outcome === 'truce' ? 'agrees to a truce' : 'gives up'}.`);
+      return;
+    }
+    const losing = lostLand >= 0.1 || (w.capFell && w.capFell[s]) || (s === 'att' ? w.front < -15 : w.front > 15);
+    w.outcome = losing ? foe : 'truce';
+    say(g, losing ? `${who} is exhausted by the war and sues for peace.` : `${who} is exhausted by the war. Neither side can win: both agree to stop.`);
   }
   // the divisions of a war that is over go home; occupied land goes back
   function tidyWar(g) {
@@ -2200,7 +2265,7 @@
       const p = lose === 'USA' ? 'US' : 'SU'; g.bonus[p] -= 6;
       say(g, `The ${NAME[p]} withdraws from ${info(win).name} in defeat.`); return;
     }
-    if (done === 'def') { g.c[lose].stab = Math.max(1, g.c[lose].stab - 1); say(g, `${Dn} throws back the invasion from ${A} and carries the war into ${A}.`); }
+    if (done === 'def') { g.c[lose].stab = Math.max(1, g.c[lose].stab - 1); say(g, w.gaveUp === 'att' ? `${A} gives up its war against ${Dn}.` : `${Dn} throws back the invasion from ${A} and carries the war into ${A}.`); }
     startConference(g, w, done);                                          // the winners dictate the peace
   }
   // the loser pays: its treasury (or its army, if it has none to speak of) goes to the winner

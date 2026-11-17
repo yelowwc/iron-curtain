@@ -147,10 +147,10 @@ main { flex: 1; display: flex; min-height: 0; }
 .zone.cut .zoneline { stroke-dasharray: none; stroke-width: 1.4; }
 .terr { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; margin: 8px 0; background: var(--panel2); }
 .terr .thead { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 6px; }
-.terr .meter { display: grid; grid-template-columns: 78px 1fr 28px; gap: 8px; align-items: center; font-size: 12px; margin: 3px 0; color: var(--dim); }
-.terr .meter .bar { height: 6px; background: #0b141c; border-radius: 3px; overflow: hidden; display: block; }
-.terr .meter .bar i { display: block; height: 100%; }
-.terr .meter b { text-align: right; }
+.terr .meter, .exbox .meter { display: grid; grid-template-columns: 78px 1fr 28px; gap: 8px; align-items: center; font-size: 12px; margin: 3px 0; color: var(--dim); }
+.terr .meter .bar, .exbox .meter .bar { height: 6px; background: #0b141c; border-radius: 3px; overflow: hidden; display: block; }
+.terr .meter .bar i, .exbox .meter .bar i { display: block; height: 100%; }
+.terr .meter b, .exbox .meter b { text-align: right; }
 .policies { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; margin: 8px 0 4px; }
 .pol { font-size: 11px; padding: 5px 2px; border: 1px solid var(--line); border-radius: 5px; background: transparent; color: var(--dim); }
 .pol.on { border-color: var(--gold); color: var(--gold); background: rgba(240,200,90,.08); }
@@ -288,3 +288,7 @@ body.dc1 .defcon { animation: blink 1s steps(1) infinite; }
 .tnode.locked { opacity: .6; }
 .tnode.closed { opacity: .32; text-decoration: line-through; }
 .treebtn { border-color: #e8c45a !important; }
+.exbox { margin: 6px 0 2px; }
+.exbox .meter { grid-template-columns: 96px 1fr 28px; }
+.exbox .meter small { display: block; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.exbox .meter .bar { width: 100%; margin: 0; }

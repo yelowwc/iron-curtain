@@ -942,6 +942,10 @@
   const divLine = (sw, side) => { const S = GAME.sidesOf(g, sw)[side], n = GAME.unitsOf(g, sw).filter(u => S.includes(u.k)).length; return n ? `${n} division${n > 1 ? 's' : ''}` : 'army ' + Math.round(g.c[sw[side]].army); };
   // the troops along the front that nobody sees: how many divisions' worth each side still has there
   const ffLine = w => w.ff ? `<div class="sub ffline">Front-line troops (not on the map, they fight on their own): <b>${w.ff.att.toFixed(1)}</b> vs <b>${w.ff.def.toFixed(1)}</b> divisions' worth</div>` : '';
+  // war exhaustion: how tired each side's people are of the war; at 100 that side must make peace
+  const exColour = v => v >= 80 ? '#e0533c' : v >= 60 ? '#f0a03c' : '#c9b37a';
+  const exLine = (name, v) => `<div class="meter"><small>${esc(name)}</small><span class="bar"><i style="width:${Math.round(v)}%;background:${exColour(v)}"></i></span><b style="color:${exColour(v)}">${Math.round(v)}</b></div>`;
+  const exBox = (w, A, B) => { const ex = w.ex || { att: 0, def: 0 }; return `<div class="exbox" title="War exhaustion grows every season, faster with losses, lost land and a fallen capital. A tired army attacks less; at 80 there are protests. At 100 a side must make peace: if it has lost land, it loses the war; if not, the war just stops."><div class="sub"><b>War exhaustion</b> · at 100 a side must make peace</div>${exLine(A, ex.att)}${exLine(B, ex.def)}</div>`; };
   function warBox(sw) {
     const A = GAME.info(sw.att).name, B = GAME.info(sw.def).name, f = (sw.front + 100) / 2;
     let h = `<div class="warbox"><b>⚔ War: ${esc(A)} attacked ${esc(B)}</b> <span class="sub">year ${sw.years + 1}</span>
@@ -950,7 +954,8 @@
       <div class="wstate">${sw.front > 15 ? `${esc(A)} is advancing` : sw.front < -15 ? `${esc(A)} is pushed back` : 'Stalemate'}</div>
       ${['att', 'def'].filter(s => sw.capFell && sw.capFell[s]).map(s => `<div class="sub" style="color:#f0a03c">${esc(GAME.capitalName(sw[s]))} has fallen.</div>`).join('')}
       <div class="sub">${sw.held ? `${esc(A)} holds ${Math.round(sw.held.att * 100)}% of ${esc(B)}; ${esc(B)} holds ${Math.round(sw.held.def * 100)}% of ${esc(A)}. ` : ''}A country falls when it loses its capital and most of its land.</div>
-      <div class="sub">${sw.limited ? 'A border war: after 3 years at most it ends, and at worst a strip of land changes hands.' : sw.annexOnWin ? 'A war of conquest: if the attacker wins, the country disappears into it. After 8 years: a truce on the front line.' : 'If the attacker wins, it installs a friendly government. After 8 years: a truce on the front line.'}</div>
+      ${exBox(sw, A, B)}
+      <div class="sub">${sw.limited ? 'A border war: after 3 years at most it ends, and at worst a strip of land changes hands.' : sw.annexOnWin ? 'A war of conquest: if the attacker wins, the country disappears into it.' : 'If the attacker wins, it installs a friendly government.'}</div>
       ${['US', 'SU'].filter(p => sw.troops[p]).map(p => `<div class="sub">${p === 'US' ? 'American' : 'Soviet'} troops fight for ${esc(GAME.info(sw[sw.troops[p]]).name)}.</div>`).join('')}</div>`;
     const mine = GAME.playerKey(g);
     h += stanceHtml(sw);
@@ -970,7 +975,7 @@
     const terms = GAME.termsFor(g, mine, enemy);
     talkPicks = talkPicks.filter(id => terms.some(t => t.id === id && t.ok));
     const sign = GAME.peaceChance(g, sw, talkPicks.length ? talkPicks : ['white']);
-    return `<h3>Negotiate peace</h3><div class="sub">War score ${score >= 0 ? '+' : ''}${score}. The better the war goes, and the longer it lasts, the more they accept.</div>
+    return `<h3>Negotiate peace</h3><div class="sub">War score ${score >= 0 ? '+' : ''}${score}. The better the war goes, and the more tired of it they are, the more they accept.</div>
       <div class="terms">${terms.filter(t => t.id !== 'white').map(t => `<label class="${t.ok ? '' : 'off'}" title="${esc(t.ok ? t.help : t.why)}">
         <input type="checkbox" data-term="${t.id}" ${talkPicks.includes(t.id) ? 'checked' : ''} ${t.ok ? '' : 'disabled'}> ${esc(t.name)} <em>${t.cost}</em></label>`).join('')}</div>
       <button class="act" id="propose" ${sw.talked === g.year ? 'disabled' : ''}><b>${talkPicks.length ? 'Offer these terms' : 'Offer status quo peace'}</b><em>0 IP</em>
@@ -1000,7 +1005,7 @@
   function civilDivs(w) {
     const S = GAME.sidesOf(g, w), us = GAME.unitsOf(g, w), n = side => us.filter(u => S[side].includes(u.k)).length;
     const held = w.held ? Math.round(w.held.att * 100) : 0;
-    return `<div class="wsides"><span><b>Rebels</b><small>${n('att')} divisions</small></span><span><b>Government</b><small>${n('def')} divisions</small></span></div>${ffLine(w)}
+    return `<div class="wsides"><span><b>Rebels</b><small>${n('att')} divisions</small></span><span><b>Government</b><small>${n('def')} divisions</small></span></div>${ffLine(w)}${exBox(w, 'Rebels', 'Government')}
       <div class="sub">The rebels hold ${held}% of the land. They win by taking the capital and half the land${w.sep ? ' (for independence: 60% of the land)' : ''}; the government wins by destroying their army. After 10 years: a truce.</div>${stanceHtml(w)}`;
   }
   function partiesHtml(key) {
