@@ -233,7 +233,7 @@
     return n;
   }
   function income(g, side) {
-    let n = (side === 'SU' ? 14.3 : 8.1) + (g.pw ? g.pw[side].econ / (side === 'SU' ? 30 : 50) : 1.8);   // the Soviet planned economy starts with fewer friends but more to spend; both grow with the economy
+    let n = (side === 'SU' ? 14.3 : 8.8) + (g.pw ? g.pw[side].econ / (side === 'SU' ? 30 : 50) : 1.8);   // the Soviet planned economy starts with fewer friends but more to spend; both grow with the economy
     for (const d of D.COUNTRIES) if (blocOf(g, d.key) === side) n += d.val * 0.25;
     return Math.round(n + modOf(g, HOME[side], 'income'));
   }
@@ -1476,7 +1476,7 @@
   const SEASONS = ['Spring', 'Summer', 'Autumn', 'Winter'];
   const DIV = 2;                                          // army points in one full-strength division
   const MAX_DIVS = 24;
-  const SPEED = 320, WINTER = 0.6, SUB = 4, CONTACT = 80, REACH = 140;   // ... and how far around itself a division holds the ground // km a season (less in winter), steps in a season, km at which divisions fight
+  const SPEED = 320, WINTER = 0.6, SUB = 4, CONTACT = 80, REACH = 110, ENEMY_GROUND = 2;   // ... and how far around itself a division holds the ground // km a season (less in winter), steps in a season, km at which divisions fight
   if (!G.CWGRID && typeof require === 'function') try { require('./provgrid.js'); } catch (e) { }
   const GR = G.CWGRID || { step: 0.5, lon0: -180, lat0: 84, cols: 720, rows: 280, rle: '' };
   const GC = GR.cols, GRR = GR.rows, CELL = new Int16Array(GC * GRR).fill(-1), CELLS_OF = {};
@@ -1652,7 +1652,7 @@
       const n = helper ? 8 : w.civil ? civilDivs(g, w, k) : divsFor(g, k);
       w.base[k] = n;
       // behind the divisions you see stand the troops that hold the whole line: about half as many again
-      const add = n * 0.5 * quality(g, k); w.ff[side] += add; w.ffMax[side] += add;
+      const add = n * 0.25 * quality(g, k); w.ff[side] += add; w.ffMax[side] += add;
       raise(g, w, T, k, n, quality(g, k));
       const made = g.units.length - before;
       if (!w.civil && !isHome(k) && made) for (const u of g.units.slice(before)) u.str = clamp(g.c[k].army / (made * DIV), 0.3, 1);
@@ -1806,6 +1806,7 @@
         u.path = r;
       }
       w.quiet = (w.quiet || 0) + 1;
+      for (const u of unitsOf(g, w)) u.trail = [[u.x, u.y]];                    // where each division went this season (the map follows it)
       const snap = new Map(unitsOf(g, w).map(u => [u, u.str])), lost = { att: 0, def: 0 };
       const count = () => { const live = new Set(g.units); for (const [u, s] of snap) { const now = live.has(u) ? u.str : 0; if (now < s) lost[sideOfU(T, u)] += s - now; snap.set(u, now); } };
       for (let s = 0; s < SUB; s++) { step(g, w, T); frontForces(g, w, T); }
@@ -1841,7 +1842,7 @@
       const side = sideOfU(T, u), foe = FOE[side];
       let left = (u.carry || 0) + SPEED * (isHome(u.k) ? 1.2 : 1) * (winter ? WINTER : 1) / SUB;
       while (u.path.length) {
-        const next = u.path[0], d = km(cellLL(u.cell), cellLL(next));
+        const next = u.path[0], d = km(cellLL(u.cell), cellLL(next)) * (T.side[next] !== side ? ENEMY_GROUND : 1);   // taking ground is slower than marching through your own
         if (d > left) break;
         if (!canEnter(T, side, next)) { u.path = []; break; }
         if (T.side[next] !== side) {
@@ -1854,9 +1855,9 @@
           }
         }
         left -= d; u.path.shift(); putAt(u, next); u.org = Math.max(0, u.org - 0.01);
+        (u.trail = u.trail || []).push([u.x, u.y]);
+        if (!u.path.length && u.goal && cellAt(u.goal[0], u.goal[1]) === u.cell) { u.x = u.goal[0]; u.y = u.goal[1]; u.trail[u.trail.length - 1] = [u.x, u.y]; }   // the very spot it was sent to
         if (T.side[next] !== side) setCell(g, w, T, next, side);
-        // the ground on either side of the march goes too, if nobody holds it
-        for (const j of cellNb4(next)) if (T.side[j] === foe && canEnter(T, side, j) && !near(side, cellLL(j), CONTACT * 0.7).length) setCell(g, w, T, j, side);
       }
       u.carry = u.path.length ? Math.min(left, 200) : 0;
     }
@@ -1890,7 +1891,7 @@
         const back = cellNb(u.cell).concat(...cellNb(u.cell).map(cellNb)).filter(j => T.side[j] === foe && j !== u.cell && !near(foe, cellLL(j), 45).length)
           .sort((a, b) => km(cellLL(b), ac) - km(cellLL(a), ac))[0];
         if (back === undefined) { u.str = 0; say(g, `A division of ${nameOf(g, u.k)} is surrounded at ${town(CELL[u.cell])} and destroyed.`); }
-        else { putAt(u, back); u.path = []; u.org = Math.max(0, u.org - 0.1); }
+        else { putAt(u, back); u.path = []; u.org = Math.max(0, u.org - 0.1); (u.trail = u.trail || []).push([u.x, u.y]); }
       }
       if (T.side[t.cell] === foe && !near(side, cellLL(t.cell), 30).length) setCell(g, w, T, t.cell, side);
     }
@@ -1925,8 +1926,8 @@
       const mine = local(side, cellLL(i)), theirs = local(foe, pj) * (T.S[foe].includes(T.own[j]) ? 1.25 : 1);
       loss[side] += theirs * 0.004; loss[foe] += mine * 0.004;
       if (mine <= theirs * 1.2) continue;
-      if (Math.random() > Math.min(0.2, (mine / Math.max(0.001, theirs) - 1.2) * 0.25)) continue;
-      if (us.some(u => sideOfU(T, u) === foe && km(ll(u), pj) < CONTACT * 0.6)) continue;   // their divisions hold their own ground
+      if (Math.random() > Math.min(0.12, (mine / Math.max(0.001, theirs) - 1.2) * 0.15)) continue;
+      if (us.some(u => km(ll(u), pj) < REACH)) continue;                      // where divisions stand, only they move the front
       setCell(g, w, T, j, side); done.add(j);
     }
     for (const side of ['att', 'def']) w.ff[side] = Math.max(0, w.ff[side] - loss[side]);
@@ -1946,7 +1947,7 @@
           const i = r * GC + ((c % GC) + GC) % GC;
           if (T.side[i] !== foe || !canEnter(T, side, i)) continue;
           const p = cellLL(i), d = km(p, ll(u)); if (d > REACH) continue;
-          if (enemies.some(x => km(ll(x), p) <= d + 70)) continue;          // the enemy is about as close: it stays theirs
+          if (enemies.some(x => km(ll(x), p) <= d + 30)) continue;          // the enemy is about as close: it stays theirs (the front runs about halfway between)
           setCell(g, w, T, i, side);
         }
       }
@@ -2127,10 +2128,9 @@
   function setStance(g, w, s) { g.stance = g.stance || {}; g.stance[w.id] = s; }
   // the cells of a war, for the map: each with who it belongs to and who holds it
   function warCells(g, w) { const T = theatre(g, w); return { S: T.S, cells: T.cells, own: T.own, side: T.side }; }
-  // one season for a player at war; the rest of the year happens when the winter is over
+  // one season (each click of End Season); the year ends when the winter is over
   function endSeason(g) {
     if (g.over || g.pending.length || g.peace || g.conf) return;
-    if (!playerFights(g)) return endYear(g);
     warSeason(g); if (g.over) return;
     g.season = (g.season || 0) + 1;
     if (g.season >= 4 && !g.conf) endYear(g);

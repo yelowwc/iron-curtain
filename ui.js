@@ -255,8 +255,11 @@
   }
 
   let zoomK = 1;
-  const zoom = d3.zoom().scaleExtent([1, 8]).translateExtent([[0, 0], [W, H]]).filter(e => (!e.ctrlKey || e.type === 'wheel') && !e.button && !e.shiftKey)
-    .on('zoom', e => { root.attr('transform', e.transform); zoomK = e.transform.k; drawLabels(); root.selectAll('.usize').attr('transform', `scale(${1 / Math.sqrt(zoomK)})`);  rescale(); })
+  // map marks (divisions, arrows, badges) grow a little as you zoom in, up to 8x; closer than that they keep their size on screen
+  const townGrow = () => Math.min(1.8, 1 + Math.max(0, zoomK - 4) / 10);   // town names grow a little when you are close to the front
+  const uScale = () => zoomK <= 8 ? 1 / Math.sqrt(zoomK) : Math.sqrt(8) / zoomK;
+  const zoom = d3.zoom().scaleExtent([1, 24]).translateExtent([[0, 0], [W, H]]).filter(e => (!e.ctrlKey || e.type === 'wheel') && !e.button && !e.shiftKey)
+    .on('zoom', e => { root.attr('transform', e.transform); zoomK = e.transform.k; drawLabels(); root.selectAll('.usize').attr('transform', `scale(${uScale()})`);  rescale(); })
     .on('end', () => { drawCities(); if (g && g.units && g.units.length) { instantUnits = true; drawWar(); } });                                     // city names are sorted out once the zoom stops
   svg.call(zoom).on('dblclick.zoom', null);
   // hatching and capital dots keep their size on screen at any zoom
@@ -266,7 +269,8 @@
     defs.select('#occupied').attr('patternTransform', `rotate(-45) scale(${k})`);
     capitals.selectAll('circle').attr('r', function () { return (this.classList.contains('fallen') ? 2.6 : 1.6) * Math.pow(k, 0.75); });
     towns.selectAll('circle').attr('r', 1.1 * Math.pow(k, 0.75));
-    cityLabels.selectAll('text').style('font-size', 5.5 * k + 'px').style('stroke-width', 1.6 * k + 'px').attr('dx', 2.6 * k).attr('dy', 1.9 * k);
+    const tk = k * townGrow();
+    cityLabels.selectAll('text').style('font-size', 5.5 * tk + 'px').style('stroke-width', 1.6 * tk + 'px').attr('dx', 2.6 * tk).attr('dy', 1.9 * tk);
   }
   // towns appear as you zoom in (2.6x); names of capitals from 2x, of towns with their dots. Names that would overlap are left out.
   const cityXY = {}; D.CITIES.forEach(c => cityXY[c.key + c.name] = proj([c.lon, c.lat]));
@@ -280,7 +284,7 @@
     const boxes = labelled().map(labelBox);
     const cand = [...(zoomK >= 2 ? D.CITIES.filter(isCapital) : []), ...shownTowns], named = [];
     for (const c of cand) {
-      const [x, y] = cityXY[c.key + c.name], w = c.name.length * 3.1 + 4, b = [x * zoomK, y * zoomK - 4, x * zoomK + w, y * zoomK + 4];
+      const [x, y] = cityXY[c.key + c.name], tg = townGrow(), w = c.name.length * 3.1 * tg + 4, b = [x * zoomK, y * zoomK - 4 * tg, x * zoomK + w, y * zoomK + 4 * tg];
       if (boxes.some(o => b[0] < o[2] && b[2] > o[0] && b[1] < o[3] && b[3] > o[1])) continue;
       boxes.push(b); named.push(c);
     }
@@ -404,7 +408,7 @@
       }
       return null;
     };
-    const out = [], off = 4 / Math.sqrt(zoomK), defCol = colour(z.state);
+    const out = [], off = 4 * uScale(), defCol = colour(z.state);
     for (let i = 0; i < n; i++) {
       const p = pointAt((i + 0.5) / n * total); if (!p) continue;
       let nx = -p.dy, ny = p.dx;
@@ -549,7 +553,7 @@
       inner.append('path').attr('d', 'M-3.4,-2.3L3.4,2.3M3.4,-2.3L-3.4,2.3');
       const um = ue.merge(us);
       um.select('rect').attr('fill', u => u.col);
-      um.select('.usize').attr('transform', `scale(${1 / Math.sqrt(zoomK)})`);
+      um.select('.usize').attr('transform', `scale(${uScale()})`);
       (window.NO_ANIM ? um : um.transition().duration(ROLL).ease(d3.easeCubicInOut)).attr('transform', u => `translate(${u.x},${u.y})`).style('opacity', 1);
     });
     arrows.selectAll('path').data(W2.filter(w => !GAME.unitsOf(g, w).length), w => w.id).join('path').attr('class', 'warline').attr('marker-end', 'url(#arrowhead)').attr('d', w => {
@@ -579,14 +583,19 @@
     drawZones();
     const mineK = GAME.myKeys(g), units = (g.units || []);
     unitSel = new Set([...unitSel].filter(id => units.some(u => u.id === id && mineK.includes(u.k))));
-    // one square per division; the divisions at one place stand side by side in a little block
-    const spots = {};
-    for (const u of units) { const id = u.cell; (spots[id] = spots[id] || []).push(u); }
-    const sp = 8.6 / Math.sqrt(zoomK), pos = {};
-    for (const id in spots) {
-      const us = spots[id].sort((x, y) => (x.k < y.k ? -1 : x.k > y.k ? 1 : x.id - y.id)), c = stackXY(us[0]);
-      const n = us.length, cols = Math.ceil(Math.sqrt(n)), rows = Math.ceil(n / cols);
-      us.forEach((u, i) => { const col = i % cols, row = Math.floor(i / cols); pos[u.id] = [c[0] + (col - (cols - 1) / 2) * sp, c[1] + (row - (rows - 1) / 2) * sp]; });
+    // one square per division, where it really stands; squares that would overlap are nudged apart a little
+    const sp = 8.6 * uScale(), pos = {}, list = units.slice().sort((x, y) => x.id - y.id);
+    for (const u of list) pos[u.id] = stackXY(u).slice();
+    for (let it = 0; it < 8; it++) {
+      let moved = false;
+      for (let a = 0; a < list.length; a++) for (let b = a + 1; b < list.length; b++) {
+        const p = pos[list[a].id], q = pos[list[b].id], dx = q[0] - p[0], dy = q[1] - p[1], d = Math.hypot(dx, dy);
+        if (d >= sp) continue;
+        const ang = d > 1e-6 ? null : (list[b].id * 2.399) % (2 * Math.PI);     // on the very same spot: fan out in a fixed direction
+        const ux = ang === null ? dx / d : Math.cos(ang), uy = ang === null ? dy / d : Math.sin(ang), push = (sp - d) / 2;
+        p[0] -= ux * push; p[1] -= uy * push; q[0] += ux * push; q[1] += uy * push; moved = true;
+      }
+      if (!moved) break;
     }
     unitPos = pos;
     const ug = unitLayer.selectAll('g.div').data(units, u => u.id);
@@ -605,8 +614,23 @@
     const um = ue.merge(ug).classed('mine', u => mineK.includes(u.k)).classed('sel', u => unitSel.has(u.id)).classed('cut', u => !!u.cut);
     um.select('.ubox').attr('fill', u => colour(u.k));
     um.select('.ubar').attr('width', u => 7 * u.str).attr('fill', u => u.str > 0.66 ? '#7cc36b' : u.str > 0.33 ? '#e8c45a' : '#e0533c');
-    um.select('.usize').attr('transform', `scale(${1 / Math.sqrt(zoomK)})`);
-    (window.NO_ANIM || instantUnits ? um : um.transition().duration(700).ease(d3.easeCubicInOut)).attr('transform', u => `translate(${pos[u.id]})`);
+    um.select('.usize').attr('transform', `scale(${uScale()})`);
+    // a new season: each division walks the way it went (u.trail), in step with the front rolling to its new place
+    if (window.NO_ANIM || instantUnits) um.attr('transform', u => `translate(${pos[u.id]})`);
+    else um.each(function (u) {
+      const el = d3.select(this), end = pos[u.id], stamp = g.year * 4 + (g.season || 0);
+      if (el.attr('data-at') === end.join(',')) return;
+      el.attr('data-at', end.join(','));
+      const now = (el.attr('transform') || '').match(/translate\(([-\d.e]+),([-\d.e]+)\)/), from = now ? [+now[1], +now[2]] : end;
+      const fresh = u.trail && u.trail.length > 1 && el.attr('data-stamp') !== String(stamp);
+      el.attr('data-stamp', stamp);
+      // the way: from where it is drawn, through the cells it crossed, to its spot
+      const pts = [from, ...(fresh ? u.trail.slice(1, -1).map(p => proj(p)) : []), end], seg = [0];
+      for (let i = 1; i < pts.length; i++) seg.push(seg[i - 1] + Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]));
+      const len = seg[seg.length - 1] || 1;
+      const at = t => { const d = t * len; let i = 1; while (i < seg.length - 1 && seg[i] < d) i++; const f = (d - seg[i - 1]) / Math.max(1e-6, seg[i] - seg[i - 1]); return [pts[i - 1][0] + (pts[i][0] - pts[i - 1][0]) * f, pts[i - 1][1] + (pts[i][1] - pts[i - 1][1]) * f]; };
+      el.interrupt().transition().duration(fresh ? 1500 : 500).ease(d3.easeCubicInOut).attrTween('transform', () => t => `translate(${at(t)})`);
+    });
     instantUnits = false;
     um.order();
     // your marching orders: a dashed line along the way
@@ -640,9 +664,9 @@
     spot.on('mousemove', (e, b) => battleTip(e, b)).on('mouseleave', () => hover());
     const bm = be.merge(bg);
     bm.select('.bbadge').attr('stroke', b => colour(b.won ? b.att : b.def));
-    bm.select('.usize').attr('transform', `scale(${1 / Math.sqrt(zoomK)})`);
+    bm.select('.usize').attr('transform', `scale(${uScale()})`);
     bm.select('.bspot').attr('transform', b => `translate(${battleSpot(b).m})`);
-    const aw = 1.7 / Math.sqrt(zoomK);
+    const aw = 1.7 * uScale();
     bm.select('.barrow').attr('d', b => { const { o, m } = battleSpot(b); return fatArrow(o, m, aw); });
     // a new season's battles: the arrows grow from the attackers to the front, then the fight flares up
     if (!window.NO_ANIM) {
@@ -777,7 +801,7 @@
       if (Math.hypot(to[0] - last[0], to[1] - last[1]) > 4 / zoomK) pts.push(to);
       const line = pts.concat([to]), tail = line.length > 2 ? line[line.length - 3] : line[0];
       drawLayer.selectAll('path.drawroute').data([0]).join('path').attr('class', 'drawroute').attr('d', d3.line().curve(d3.curveCatmullRom)(line.slice(0, -1)));
-      drawLayer.selectAll('path.drawarrow').data([0]).join('path').attr('class', 'drawarrow').attr('d', fatArrow(tail, to, 1.5 / Math.sqrt(zoomK)) || '');
+      drawLayer.selectAll('path.drawarrow').data([0]).join('path').attr('class', 'drawarrow').attr('d', fatArrow(tail, to, 1.5 * uScale()) || '');
       const tip = $('tip'), r = $('mapbox').getBoundingClientRect();
       tip.innerHTML = pid !== null ? `<b>March here</b> · ${esc(GAME.PBY[pid].name)}<br>${unitSel.size} division${unitSel.size > 1 ? 's' : ''}` : 'Not here';
       tip.hidden = false; tip.style.left = Math.min(e.clientX - r.left + 14, r.width - 200) + 'px'; tip.style.top = (e.clientY - r.top + 14) + 'px';
@@ -909,16 +933,16 @@
   function topBar() {
     const t = g.tension, tc = t >= 80 ? '#ff4b3e' : t >= 55 ? '#f0a03c' : '#6fbf73';
     const fighting = GAME.playerFights(g);
-    $('mapbox').dataset.season = fighting ? ['spring', 'summer', 'autumn', 'winter'][g.season || 0] : '';
-    $('year').textContent = fighting ? `${GAME.SEASONS[g.season || 0]} ${g.year}` : g.year;
-    $('end').textContent = fighting ? 'End Season ▸' : 'End Year ▸';
+    $('mapbox').dataset.season = ['spring', 'summer', 'autumn', 'winter'][g.season || 0];   // the year always runs season by season
+    $('year').textContent = `${GAME.SEASONS[g.season || 0]} ${g.year}`;
+    $('end').textContent = 'End Season ▸';
     const dc = t < 30 ? 5 : t < 50 ? 4 : t < 70 ? 3 : t < 85 ? 2 : 1, dcol = ['', '#ff3b2f', '#ff7a2f', '#f0c03c', '#7cc36b', '#5aa3c8'][dc];
     $('tension').innerHTML = `<span class="defcon" style="color:${dcol};border-color:${dcol}">DEFCON ${dc}</span> <span class="bar"><i style="width:${t}%;background:${tc}"></i></span><b style="color:${tc}">${Math.round(t)}</b>`;
     $('tension').title = 'World tension. DEFCON 5 is peace; at DEFCON 1 (tension 100) nuclear war ends the game for everyone.';
     document.body.classList.toggle('dc2', dc === 2); document.body.classList.toggle('dc1', dc === 1);
     if (window.SFX) SFX.tension(t);
     $('end').disabled = !!g.over || !!g.conf;
-    $('end').title = g.conf ? 'Finish the peace conference first' : fighting ? 'At war, the year runs season by season (Enter)' : 'End the year (Enter)';
+    $('end').title = g.conf ? 'Finish the peace conference first' : 'The year runs season by season: Spring, Summer, Autumn, Winter (Enter)';
     $('detente').hidden = !!g.nation;
     $('finish').hidden = !!g.over || g.year <= GAME.END;
     if (g.nation) {
@@ -1043,7 +1067,7 @@
   // the cabinet: hand part of the year's IP to your ministers
   function cabinetHtml() {
     const a = g.auto || { on: false, share: 0.5, focus: 'balanced' };
-    return `<h3>Cabinet</h3><div class="sub">Let your ministers spend part of your IP each year when you press End Year.</div>
+    return `<h3>Cabinet</h3><div class="sub">Let your ministers spend part of your IP each year when the winter ends.</div>
       <div class="policies"><button class="pol ${a.on ? 'on' : ''}" data-cab="on|${a.on ? 0 : 1}">${a.on ? 'On' : 'Off'}</button>
       ${[0.25, 0.5, 0.75, 1].map(s => `<button class="pol ${a.share === s ? 'on' : ''}" data-cab="share|${s}">${s * 100}%</button>`).join('')}</div>
       <div class="policies">${Object.keys(GAME.FOCUS).map(f => `<button class="pol ${a.focus === f ? 'on' : ''}" data-cab="focus|${f}">${GAME.FOCUS[f]}</button>`).join('')}</div>
@@ -1152,7 +1176,7 @@
         <li>Push countries past <b>${GAME.BLOC}</b> toward you to bring them into your bloc. Each adds its value to your score.</li>
         <li>Neutral and unstable countries (few ● dots) are easiest to win.</li>
         <li>Coups and invasions are fast but raise <b>tension</b>. At 100: nuclear war, everybody loses. Use <b>Détente</b> to cool things down.</li>
-        <li>Press <b>End Year</b> when you are done (<b>End Season</b> while your troops fight).</li></ul>`;
+        <li>Press <b>End Season</b> when you are done. Four seasons make a year; Influence comes in each spring.</li></ul>`;
       bind(el); return;
     }
     const d = GAME.info(sel), c = g.c[sel], me = actor();
@@ -1346,11 +1370,11 @@
   }
   function howTo() {
     return `<ul>
-      <li><b>Each year</b> you get Influence Points (IP). Click a country and spend them. Then press <b>End Year</b>.</li>
+      <li><b>Each year</b> you get Influence Points (IP). Click a country and spend them. Then press <b>End Season</b>: four seasons make a year, and the new IP comes each spring.</li>
       <li><b>As a superpower</b>, push countries past ${GAME.BLOC} toward you to bring them into your bloc. When ${GAME.END} ends, the bigger bloc wins, and then you can keep playing into the new century.</li>
       <li><b>As a nation</b>, build your army, keep order at home, make friends, join an alliance, and maybe invade a neighbour. Don't get overthrown.</li>
       <li><b>Propaganda</b> (1 IP) and <b>Economic Aid</b> (3 IP) pull a country toward you. A superpower can also <b>Back a Coup</b> (5 IP).</li>
-      <li><b>Wars</b> are fought with <b>divisions</b> on the map, season by season (<b>End Season</b> while you are at war). Each division is a square; yours have a gold rim. Click one (shift-click: add, double-click: all there, <b>shift + drag</b>: a box), then <b>drag an arrow</b> from them to any spot (or right-click it): they march freely, and enemy troops in the way mean a battle. Divisions you leave alone follow your generals: <b>Advance</b> or <b>Hold the line</b>. Close a ring around enemy divisions and they starve and surrender; a country falls when it loses its capital and most of its land.</li>
+      <li><b>Wars</b> are fought with <b>divisions</b> on the map, season by season. Each division is a square; yours have a gold rim. Click one (shift-click: add, double-click: all there, <b>shift + drag</b>: a box), then <b>drag an arrow</b> from them to any spot (or right-click it): they march freely, and enemy troops in the way mean a battle. Divisions you leave alone follow your generals: <b>Advance</b> or <b>Hold the line</b>. Close a ring around enemy divisions and they starve and surrender; a country falls when it loses its capital and most of its land.</li>
       <li>Alliances (NATO, Warsaw Pact…) defend their members.</li>
       <li><b>Civil wars</b> (⚔) are fought with divisions too: the rebels hold land in their cause's colour. Arm a side or send troops to help it win.</li>
       <li><b>Tension</b> rises with coups, invasions and crises. At 100 it is nuclear war and everyone loses. <b>Détente</b> lowers it.</li></ul>`;
@@ -1393,7 +1417,7 @@
     if (!g.over && g.year !== y0) { const news = g.news.filter(n => n.year === g.year && !/^(You chose|Soviet Union:|United States:|Your )/.test(n.text)), big = /bomb|^WAR:|falls|Coup|dies|is dead|crisis|revolution|founded|wall|moon|orbit/i, titled = n => /^[^.!]{4,60}[.!] [A-Z]/.test(n.text);
       const pick = news.find(n => titled(n) && big.test(n.text)) || news.find(n => big.test(n.text)) || news.find(titled) || news[news.length - 1];
       const top = pick && titled(pick) ? { text: pick.text.split(/(?<=[.!]) /)[0] } : pick; yearCard(String(g.year), top ? top.text : ''); if (window.SFX) SFX.morse(); }
-    else if (!g.over && (g.season || 0) !== s0) yearCard(`${GAME.SEASONS[g.season || 0]} ${g.year}`, '');
+    else if (!g.over && (g.season || 0) !== s0 && GAME.playerFights(g)) yearCard(`${GAME.SEASONS[g.season || 0]} ${g.year}`, '');   // a title card each season only while you fight
     if (!g.over) toast(g.year !== y0 ? `${g.year} begins: +${g.nation ? GAME.nationIncome(g) : GAME.income(g, g.side)} IP` : `${GAME.SEASONS[g.season || 0]} ${g.year}`);
     const wait = window.NO_ANIM || window.NO_WAIT ? 0 : Math.max(0, busyUntil - performance.now());
     if (!wait) return g.over ? gameOver() : showEvents();

@@ -20,7 +20,7 @@
       await wait(20);
     }
   }
-  async function endYear() { click('#end'); await wait(250); await answer(); }
+  async function endYear() { const y = G().year; for (let i = 0; i < 16 && G().year === y && !G().over; i++) { if (q('#end').disabled) { await wait(300); continue; } click('#end'); await wait(250); await answer(); } }   // the year runs in four seasons
   async function step(name, fn) { try { await fn(); } catch (e) { check(name, false, 'threw: ' + e.message); } }
 
   await wait(300);
@@ -160,7 +160,7 @@
     check('war: stance hold', g.stance[g.wars[0].id] === 'hold');
     click('[data-stance$="|advance"]'); await wait(30);
     for (let i = 0; i < 90 && g.wars.some(w => w.att === 'IND' || w.def === 'IND') && !g.over; i++) { click('#end'); await wait(120); await answer(); if (g.conf) { GAME.confAuto(g); ironCurtain.refresh(); } }
-    check('war: it ends, the divisions go home', !g.wars.some(w => w.att === 'IND' || w.def === 'IND') && !g.units.some(u => u.k === 'IND') && /Year/.test(q('#end').textContent), g.wars.length + ' wars');
+    check('war: it ends, the divisions go home', !g.wars.some(w => w.att === 'IND' || w.def === 'IND') && !g.units.some(u => u.k === 'IND'), g.wars.length + ' wars');
   });
   // ---- a civil war fought with divisions: you are the government, then the rebels ----
   await step('civil war', async () => {
@@ -188,7 +188,7 @@
     try { localStorage.removeItem('iron-curtain-lite-3'); } catch (e) { }
     ironCurtain.start(); await wait(50); click('[data-side="US"]'); await wait(100); await answer();
     const g = G();
-    for (let i = 0; i < 260 && g.year <= 1991 && !g.over; i++) { if (g.conf) { GAME.confAuto(g); ironCurtain.refresh(); } if (!g.season) GAME.computerTurn(g, 'US'); click('#end'); await wait(250); if (q('#onward')) break; await answer(); }
+    for (let i = 0; i < 420 && g.year <= 1991 && !g.over; i++) { if (g.conf) { GAME.confAuto(g); ironCurtain.refresh(); } if (!g.season) GAME.computerTurn(g, 'US'); click('#end'); await wait(250); if (q('#onward')) break; await answer(); }
     if (g.over) { check('verdict: reached 1992', true, 'game ended early: ' + g.over.why); return; }
     check('verdict: shown after 1991', !!q('#onward') && /end of the Cold War/i.test(q('#card').textContent), g.year);
     click('#onward'); await wait(100); await answer();
